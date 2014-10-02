@@ -1,11 +1,10 @@
 # -*- coding: utf-8 -*-
 __author__ = 'Sol'
-__version__ = 'RZ'
 
 # ## CONVERSION SCRIPT SETTINGS ###
 SAVE_NPY = True
 SAVE_TXT = False
-OUTPUT_FOLDER = r'/media/Data/EDQ/data_npy/'
+OUTPUT_FOLDER = r'/output/EDQ/hdf2wide/'
 INPUT_FILE_ROOT = r"/media/Data/EDQ/data"
 
 INCLUDE_TRACKERS = ('eyefollower', 'eyelink', 'eyetribe', 'hispeed1250', 'hispeed240',
@@ -24,7 +23,7 @@ GLOB_PATH_PATTERN = INPUT_FILE_ROOT+r"/*/*/*.hdf5"
 
 import sys, os
 from timeit import default_timer as getTime
-from constants_rz import (MONOCULAR_EYE_SAMPLE, BINOCULAR_EYE_SAMPLE, MESSAGE,
+from constants import (MONOCULAR_EYE_SAMPLE, BINOCULAR_EYE_SAMPLE, MESSAGE,
                        et_nan_values, wide_row_dtype, msg_txt_mappings)
 from pix2deg import VisualAngleCalc
 import tables
@@ -44,18 +43,38 @@ if sys.version_info[0] != 2 or sys.version_info[1] >= 7:
 
     Loader.add_constructor(u'tag:yaml.org,2002:str', construct_yaml_unistr)
 
+# get git rev info for current working dir git repo
+def get_git_revision_hash(branch_name='HEAD'):
+    import subprocess
+    return subprocess.check_output(['git', 'rev-parse', branch_name])
 
+def get_git_revision_short_hash(branch_name='HEAD'):
+    import subprocess
+    return subprocess.check_output(['git', 'rev-parse', '--short', branch_name])
+
+def get_git_local_changed():
+    import subprocess
+    local_repo_status = subprocess.check_output(['git', 'status'])
+    print "======="
+    print local_repo_status
+    print '=========='
+    return local_repo_status.find('branch is up-to-date') == -1
+    
 def nabs(file_path):
     """
-
+    Return a normalized absolute path using file_path.
     :param file_path:
     :return:
     """
     return os.path.normcase(os.path.normpath(os.path.abspath(file_path)))
 
+print 'get_git_revision_hash:',get_git_revision_hash()
+print 'get_git_revision_short_hash:',get_git_revision_short_hash()
+print 'get_git_local_changed:',get_git_local_changed()
 
-OUTPUT_FOLDER = nabs(OUTPUT_FOLDER)
+OUTPUT_FOLDER = nabs(os.path.join(OUTPUT_FOLDER,get_git_revision_short_hash()))
 
+print 'OUTPUT_FOLDER:',OUTPUT_FOLDER
 
 def getTrackerTypeFromPath(fpath):
     """
