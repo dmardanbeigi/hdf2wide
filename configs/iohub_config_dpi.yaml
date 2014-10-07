@@ -1,0 +1,21 @@
+monitor_devices:
+    - Display:
+        name: display
+        reporting_unit_type: pix
+        device_number: 0
+        physical_dimensions:
+            width: 509.2
+            height: 286.4
+            unit_type: mm
+        default_eye_distance:
+            surface_center: 700
+            unit_type: mm
+        origin: center
+    - daq.hw.labjack.AnalogInput:
+        name: ain
+        channel_sampling_rate: 1000
+        resolution_index: 1
+        settling_factor: 1
+        model_name: U6
+        delay_offset: 0.0230744475627
+
