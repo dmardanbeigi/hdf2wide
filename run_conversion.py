@@ -2,34 +2,52 @@
 __author__ = 'Sol'
 
 # ## CONVERSION SCRIPT SETTINGS ###
-SAVE_NPY = True
-SAVE_TXT = False
-OUTPUT_FOLDER = r'/output/EDQ/hdf2wide/'
-INPUT_FILE_ROOT = r"/media/Data/EDQ/data"
-
 INCLUDE_TRACKERS = (
-'eyefollower', 'eyelink', 'eyetribe', 'hispeed1250', 'hispeed240',
-'red250', 'red500', 'redm', 't60xl', 'tx300', 'x2')
-INCLUDE_TRACKERS = ('hispeed1250')
+                    #'dpi',
+#                    'eyefollower', 
+#                    'eyelink', 
+#                    'eyetribe', 
+#                    'hispeed1250', 
+                    'hispeed240',
+#                    'red250', 
+#                    'red500', 
+#                    'redm', 
+#                    't60xl', 
+#                    'tx300', 
+#                    'x2'
+)
 
 INCLUDE_SUB = 'ALL'
-# INCLUDE_SUB = [127]
+INCLUDE_SUB = [3]
+
+INPUT_FILE_ROOT = r"/media/Data/EDQ/data"
+OUTPUT_FOLDER = r'/media/Data/EDQ/data_npy/'
+
+SAVE_NPY = True
+SAVE_TXT = True
 
 BLOCKS_TO_EXPORT = ['FS']
 
 GLOB_PATH_PATTERN = INPUT_FILE_ROOT + r"/*/*/*.hdf5"
 ##################################
 
-import sys, os
+import os, sys
+import glob
+import re
 from timeit import default_timer as getTime
+
+import numpy as np
+import matplotlib.pylab as plt
+plt.ion()
+
+import tables
+from collections import OrderedDict
+
 from constants import (MONOCULAR_EYE_SAMPLE, BINOCULAR_EYE_SAMPLE, MESSAGE,
                        et_nan_values, wide_row_dtype, msg_txt_mappings)
 from pix2deg import VisualAngleCalc
-import tables
-from collections import OrderedDict
-import glob
-import re
-import numpy as np
+
+from edq_shared import getFullOutputFolderPath, nabs, save_as_txt, parseTrackerMode
 
 try:
     from yaml import load, dump
@@ -42,53 +60,12 @@ if sys.version_info[0] != 2 or sys.version_info[1] >= 7:
 
     Loader.add_constructor(u'tag:yaml.org,2002:str', construct_yaml_unistr)
 
-# get git rev info for current working dir git repo
-def get_git_local_changed():
-    import subprocess
-    local_repo_status = subprocess.check_output(['git', 'status'])
-    return local_repo_status.find(
-        'nothing to commit, working directory clean') == -1 and \
-           local_repo_status.find('branch is up-to-date') == -1
-
-def get_git_revision_hash(branch_name='HEAD'):
-    import subprocess
-    return subprocess.check_output(['git', 'rev-parse', branch_name])
-
-def get_git_revision_short_hash(branch_name='HEAD'):
-    import subprocess
-    return subprocess.check_output(['git', 'rev-parse', '--short', branch_name])
-
-
 ####
 
-def nabs(file_path):
-    """
-    Return a normalized absolute path using file_path.
-    :param file_path:
-    :return:
-    """
-    return os.path.normcase(os.path.normpath(os.path.abspath(file_path)))
-
-def getFullOutputFolderPath(out_folder):
-    output_folder_postfix = "rev_{0}".format(get_git_revision_short_hash().strip())
-    if get_git_local_changed():
-        output_folder_postfix = output_folder_postfix+"_UNSYNCED"
-    return nabs(os.path.join(out_folder, output_folder_postfix))
 
 OUTPUT_FOLDER = getFullOutputFolderPath(OUTPUT_FOLDER)
 
 print 'OUTPUT_FOLDER:', OUTPUT_FOLDER
-
-
-def getTrackerTypeFromPath(fpath):
-    """
-
-    :param fpath:
-    :return:
-    """
-    if fpath.lower().endswith(".hdf5"):
-        fpath, _ = os.path.split(fpath)
-    return fpath.rsplit(os.path.sep, 3)[-2]
 
 
 def getInfoFromPath(fpath):
@@ -101,16 +78,6 @@ def getInfoFromPath(fpath):
         fpath, fname = os.path.split(fpath)
     return fpath.rsplit(os.path.sep, 3)[-2], np.uint(
         re.split('_|.hdf5', fname)[-2])
-
-
-def keepit(fpath):
-    """
-
-    :param fpath:
-    :return:
-    """
-    tracker_type = getTrackerTypeFromPath(fpath)
-    return tracker_type not in SKIP_TRACKERS
 
 
 def analyseit(fpath):
@@ -126,9 +93,6 @@ def analyseit(fpath):
         return (tracker_type in INCLUDE_TRACKERS) & (sub in INCLUDE_SUB)
 
 
-#DATA_FILES = [nabs(fpath) for fpath in glob.glob(GLOB_PATH_PATTERN) if
-#              keepit(fpath)]
-
 DATA_FILES = [nabs(fpath) for fpath in glob.glob(GLOB_PATH_PATTERN) if
               analyseit(fpath)]
 
@@ -136,6 +100,7 @@ binoc_sample_fields = ['session_id', 'device_time', 'time',
                        'left_gaze_x', 'left_gaze_y', 'left_pupil_measure1',
                        'right_gaze_x', 'right_gaze_y', 'right_pupil_measure1',
                        'status']
+
 LEFT_EYE_POS_X_IX = binoc_sample_fields.index('left_gaze_x')
 LEFT_EYE_POS_Y_IX = binoc_sample_fields.index('left_gaze_y')
 RIGHT_EYE_POS_X_IX = binoc_sample_fields.index('right_gaze_x')
@@ -148,8 +113,7 @@ mono_sample_fields = ['session_id', 'device_time', 'time',
 
 screen_measure_fields = ('screen_width', 'screen_height', 'eye_distance')
 cv_fields = ['SESSION_ID', 'trial_id', 'TRIAL_START', 'TRIAL_END', 'posx',
-             'posy', 'dt',
-             'ROW_INDEX', 'BLOCK']
+             'posy', 'dt', 'ROW_INDEX', 'BLOCK']
 
 TARGET_POS_X_IX = cv_fields.index('posx')
 TARGET_POS_Y_IX = cv_fields.index('posy')
@@ -383,7 +347,7 @@ def getScreenMeasurements(dpath, et_model_display_configs):
     :param et_model_display_configs:
     :return:
     """
-    et_model = getTrackerTypeFromPath(dpath)
+    et_model, _ = getInfoFromPath(dpath)
     display_param = et_model_display_configs.get(et_model)
     if display_param is None:
         et_config_path = glob.glob('./configs/*%s.yaml' % (et_model))
@@ -467,10 +431,11 @@ if __name__ == '__main__':
         total_file_count = len(DATA_FILES)
         hub_file = None
         for file_path in DATA_FILES:
+            t0 = getTime()
             dpath, dfile = os.path.split(file_path)
             print "Processing file %d / %d. \r" % (
                 file_proc_count + 1, total_file_count),
-            screen_measurments, et_model = getScreenMeasurements(dpath,
+            screen_measurments, et_model = getScreenMeasurements(file_path,
                                                                  et_model_display_configs)
 
             if et_model == 'eyetribe':
@@ -502,29 +467,65 @@ if __name__ == '__main__':
                 wide_format_samples.extend(output_samples)
 
             scount += len(wide_format_samples)
+            
+            data_wide = np.array(wide_format_samples, dtype=wide_row_dtype)
+            
+            ### Trackloss filter DEMO START  ###
+            #TODO: Filter off-screen, off-pshysical limit samples
+            for eye in ['left', 'right']:
+                trackloss = (data_wide['_'.join((eye, 'gaze_x'))] == et_nan_values[et_model]['x']) | \
+                            (data_wide['_'.join((eye, 'gaze_y'))] == et_nan_values[et_model]['y'])
+                data_wide['_'.join((eye, 'gaze_x'))][trackloss] = np.nan
+                data_wide['_'.join((eye, 'gaze_y'))][trackloss] = np.nan
+                data_wide['_'.join((eye, 'angle_x'))][trackloss] = np.nan
+                data_wide['_'.join((eye, 'angle_y'))][trackloss] = np.nan
+            
+#            #Eye selection error 
+            check_eye = dict()
+            if data_wide['eyetracker_mode'][0] != 'Binocular':
+                eye = parseTrackerMode(data_wide['eyetracker_mode'][0])
+                
+                #Becomes True if all nans found                
+                check_eye['right'] = sum(np.isnan(data_wide['right_gaze_x'])) == len(data_wide['right_gaze_x'])
+                check_eye['left'] = sum(np.isnan(data_wide['left_gaze_x'])) == len(data_wide['left_gaze_x'])
+                
+                if check_eye['right'] &  check_eye['left']:
+                    print "Recording does not contain any data...skipping"
+                    continue
+                elif check_eye[eye[0]]:
+                    print "Eye selection error...correcting"
+                    eye_corr = check_eye.keys()[check_eye.values().index(False)].title()
+                    data_wide['eyetracker_mode'] = eye_corr+' eye' 
+            
+            #TODO: deal with multisession recordings
+            
+            print 'Conversion duration: ', getTime()-t0
+
+            #Save
             if SAVE_NPY:
                 et_dir = nabs(r"%s/%s" % (OUTPUT_FOLDER, et_model))
                 if not os.path.exists(et_dir):
                     os.mkdir(et_dir)
                 np_file_name = r"%s/%s_%s.npy" % (
                     et_dir, et_model, dfile[:-5])
-                #print 'Saving output: ',np_file_name
-                np.save(np_file_name,
-                        np.array(wide_format_samples, dtype=wide_row_dtype))
+                
+                t0 = getTime()
+                np.save(np_file_name, data_wide)
+                print 'RAW_NPY save duration: ', getTime()-t0
+            
             if SAVE_TXT:
                 et_dir = nabs(r"%s/%s" % (OUTPUT_FOLDER, et_model))
                 if not os.path.exists(et_dir):
                     os.mkdir(et_dir)
                 txt_file_name = r"%s/%s_%s.txt" % (
                     et_dir, et_model, dfile[:-5])
-                #print 'Saving output: ',txt_file_name
-                txtf = open(txt_file_name, 'w')
-                txtf.write(header_line)
-                for s in wide_format_samples:
-                    txtf.write(format_str.format(*s))
-                txtf.close()
+                
+                t0 = getTime()
+                save_as_txt(txt_file_name, data_wide)
+                print 'RAW_TXT save duration: ', getTime()-t0
 
             hub_file.close()
+            print 
         end_time = getTime()
 
         print
