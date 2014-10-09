@@ -3,12 +3,12 @@ __author__ = 'Sol'
 
 # ## CONVERSION SCRIPT SETTINGS ###
 INCLUDE_TRACKERS = (
-                    #'dpi',
+                    'dpi',
 #                    'eyefollower', 
 #                    'eyelink', 
 #                    'eyetribe', 
 #                    'hispeed1250', 
-                    'hispeed240',
+#                    'hispeed240',
 #                    'red250', 
 #                    'red500', 
 #                    'redm', 
@@ -26,7 +26,12 @@ OUTPUT_FOLDER = r'/media/Data/EDQ/data_npy/'
 SAVE_NPY = True
 SAVE_TXT = True
 
-BLOCKS_TO_EXPORT = ['FS']
+#DPICAL is required to calibrate DPI
+BLOCKS_TO_EXPORT = ['DPICAL', 'FS']
+
+#In 2014 Apr-May EDQ recordings ROW_INDEX in DPICAL block is not set right.
+#Set FIX_DPI_CAL to True if dealing with these recordings
+FIX_DPI_CAL = True
 
 GLOB_PATH_PATTERN = INPUT_FILE_ROOT + r"/*/*/*.hdf5"
 ##################################
@@ -44,7 +49,10 @@ import tables
 from collections import OrderedDict
 
 from constants import (MONOCULAR_EYE_SAMPLE, BINOCULAR_EYE_SAMPLE, MESSAGE,
-                       et_nan_values, wide_row_dtype, msg_txt_mappings)
+                       MULTI_CHANNEL_ANALOG_INPUT,
+                       et_nan_values, wide_row_dtype, msg_txt_mappings,
+                       dpi_cal_fix)
+                       
 from pix2deg import VisualAngleCalc
 
 from edq_shared import getFullOutputFolderPath, nabs, save_as_txt, parseTrackerMode
@@ -110,6 +118,11 @@ mono_sample_fields = ['session_id', 'device_time', 'time',
                       'gaze_x', 'gaze_y', 'pupil_measure1',
                       'gaze_x', 'gaze_y', 'pupil_measure1',
                       'status']
+                      
+dpi_sample_fields = ['session_id', 'device_time', 'time',
+                      'AI_4', 'AI_5', 'device_id',
+                      'AI_0', 'AI_1', 'device_id',
+                      'AI_2']
 
 screen_measure_fields = ('screen_width', 'screen_height', 'eye_distance')
 cv_fields = ['SESSION_ID', 'trial_id', 'TRIAL_START', 'TRIAL_END', 'posx',
@@ -208,7 +221,9 @@ def convertEDQ(hub_file, screen_measures, et_model):
     session_info_dict = getSessionDataFromMsgEvents(hub_file)
 
     for session_id, session_info in session_info_dict.items():
-        # Get the condition variable set rows for the 'FS' trial type
+        if (FIX_DPI_CAL) & (et_model == 'dpi'):
+                print 'Warning! ROW_INDEX fix for DPI calibration is ENABLED'
+        # Get the condition variable set rows for the 'FS' and/or 'DPICAL' trial type
         for block in BLOCKS_TO_EXPORT:
             ecvTable = hub_file.root.data_collection.condition_variables\
                 .EXP_CV_1
@@ -216,7 +231,7 @@ def convertEDQ(hub_file, screen_measures, et_model):
                 '(BLOCK == "%s") & (SESSION_ID == %d)' % (block, session_id))
             cv_row_count = len(cv_rows)
             if cv_row_count == 0:
-                print "Skipping Session %d, not FS blocks" % (session_id)
+#                print "Skipping Session %d, not FS blocks" % (session_id)
                 continue
 
             display_size_pix = session_info['display_width_pix'], session_info[
@@ -240,14 +255,18 @@ def convertEDQ(hub_file, screen_measures, et_model):
                 else:
                     sample_fields = binoc_sample_fields
             else:
-                sample_table = getEventTableForID(hub_file,
-                                                  MONOCULAR_EYE_SAMPLE)
-                if sample_table.nrows == 0:
-                    sample_table = getEventTableForID(hub_file,
-                                                      BINOCULAR_EYE_SAMPLE)
-                    sample_fields = binoc_sample_fields
+                if et_model == 'dpi':
+                    sample_table = getEventTableForID(hub_file, MULTI_CHANNEL_ANALOG_INPUT)
+                    sample_fields = dpi_sample_fields
                 else:
-                    sample_fields = mono_sample_fields
+                    sample_table = getEventTableForID(hub_file, MONOCULAR_EYE_SAMPLE)
+                
+#                if sample_table.nrows == 0:
+#
+#                    sample_table = getEventTableForID(hub_file, BINOCULAR_EYE_SAMPLE)
+#                    sample_fields = binoc_sample_fields
+#                else:
+#                    sample_fields = mono_sample_fields
 
             if et_model == 'eyetribe':
                 # Use raw_x, raw_y instead of gaze
@@ -276,7 +295,8 @@ def convertEDQ(hub_file, screen_measures, et_model):
             # create wide format txt output
             trial_end_col_index = cv_fields.index('TRIAL_END')
             sample_array_list = []
-
+            
+            
             for row_index, cv_set in enumerate(cv_rows[:-1]):
                 assert session_id == cv_set['SESSION_ID']
                 next_cvs = cv_rows[row_index + 1]
@@ -287,6 +307,13 @@ def convertEDQ(hub_file, screen_measures, et_model):
                 # 'TRIAL_START']
                 # for targets 0 -(n-1)
                 cv_vals = [cv_set[cvf] for cvf in cv_fields]
+                
+                ####Fixes ROW_INDEX in DPI calibration routine for 2014 Apr-May EDQ recordings
+                if FIX_DPI_CAL & (cv_vals[-1] == 'DPICAL'):
+                    
+                    cv_vals[-2]=dpi_cal_fix[cv_vals[-2]]                    
+                ###                
+                
                 tpdegxy = pix2deg(cv_vals[TARGET_POS_X_IX],
                                   cv_vals[TARGET_POS_Y_IX])
                 cv_vals[trial_end_col_index] = next_cvs['TRIAL_START']
@@ -469,6 +496,10 @@ if __name__ == '__main__':
             scount += len(wide_format_samples)
             
             data_wide = np.array(wide_format_samples, dtype=wide_row_dtype)
+            
+            #DPI calibration
+            if et_model == 'dpi':
+                print "DPI calibration"
             
             ### Trackloss filter DEMO START  ###
             #TODO: Filter off-screen, off-pshysical limit samples
