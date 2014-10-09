@@ -76,7 +76,35 @@ msg_txt_mappings['Stimulus Screen ID2'] = 'display_height_pix'
 msg_txt_mapping_keys = msg_txt_mappings.keys()
 msg_txt_mapping_values = msg_txt_mappings.values()
 
-
+#Fixes ROW_INDEX in DPI calibration routine for 2014 Apr-May EDQ recordings
+dpi_cal_fix = dict([
+    (0,21),
+    (1,7),
+    (2,22),
+    (3,14),
+    (4,20),
+    (5,10),
+    (6,17),
+    (7,6),
+    (8,15),
+    (9,0),
+    (10,18),
+    (11,11),
+    (12,4),
+    (13,5),
+    (14,13),
+    (15,3),
+    (16,12),
+    (17,19),
+    (18,24),
+    (19,8),
+    (20,2),
+    (21,16),
+    (22,1),
+    (23,23),
+    (24,9),
+    ])
+    
 # iohub EventConstants values, as of June 13th, 2014.
 # Copied so that iohub does not need to be a dependency of conversion script
 KEYBOARD_INPUT = 20
