@@ -17,14 +17,14 @@ INCLUDE_TRACKERS = (
 #                    'x2'
 )
 
-INCLUDE_SUB = 'ALL'
+#INCLUDE_SUB = 'ALL'
 INCLUDE_SUB = [3]
 
 INPUT_FILE_ROOT = r"/media/Data/EDQ/data"
 OUTPUT_FOLDER = r'/media/Data/EDQ/data_npy/'
 
 SAVE_NPY = True
-SAVE_TXT = True
+SAVE_TXT = False
 
 #DPICAL is required to calibrate DPI
 BLOCKS_TO_EXPORT = ['DPICAL', 'FS']
@@ -32,6 +32,7 @@ BLOCKS_TO_EXPORT = ['DPICAL', 'FS']
 #In 2014 Apr-May EDQ recordings ROW_INDEX in DPICAL block is not set right.
 #Set FIX_DPI_CAL to True if dealing with these recordings
 FIX_DPI_CAL = True
+calibrate_dpi = True
 
 GLOB_PATH_PATTERN = INPUT_FILE_ROOT + r"/*/*/*.hdf5"
 ##################################
@@ -50,12 +51,15 @@ from collections import OrderedDict
 
 from constants import (MONOCULAR_EYE_SAMPLE, BINOCULAR_EYE_SAMPLE, MESSAGE,
                        MULTI_CHANNEL_ANALOG_INPUT,
-                       et_nan_values, wide_row_dtype, msg_txt_mappings,
-                       dpi_cal_fix)
+                       wide_row_dtype, msg_txt_mappings,
+                       dpi_cal_fix, stim_pos_mappings,
+)
                        
-from pix2deg import VisualAngleCalc
-
-from edq_shared import getFullOutputFolderPath, nabs, save_as_txt, parseTrackerMode
+from edq_shared import (getFullOutputFolderPath, nabs, 
+                       save_as_txt, parseTrackerMode, VisualAngleCalc,
+                       detect_rollingWin, #for DPI calibration 
+                       filter_trackloss,
+)
 
 try:
     from yaml import load, dump
@@ -68,6 +72,9 @@ if sys.version_info[0] != 2 or sys.version_info[1] >= 7:
 
     Loader.add_constructor(u'tag:yaml.org,2002:str', construct_yaml_unistr)
 
+#Bilateral filter from OpenCV lilbrary is used to filter DPI data
+if 'dpi' in INCLUDE_TRACKERS:
+    import cv2
 ####
 
 
@@ -221,7 +228,7 @@ def convertEDQ(hub_file, screen_measures, et_model):
     session_info_dict = getSessionDataFromMsgEvents(hub_file)
 
     for session_id, session_info in session_info_dict.items():
-        if (FIX_DPI_CAL) & (et_model == 'dpi'):
+        if calibrate_dpi & FIX_DPI_CAL & (et_model == 'dpi'):
                 print 'Warning! ROW_INDEX fix for DPI calibration is ENABLED'
         # Get the condition variable set rows for the 'FS' and/or 'DPICAL' trial type
         for block in BLOCKS_TO_EXPORT:
@@ -324,11 +331,17 @@ def convertEDQ(hub_file, screen_measures, et_model):
                         next_cvs['TRIAL_START']))
                 for sample in targ_pos_samples:
                     sample_vals = [sample[svn] for svn in sample_fields]
-
-                    rdegxy = pix2deg(sample_vals[RIGHT_EYE_POS_X_IX],
+                    
+                    if et_model == 'dpi':
+                        rdegxy = (sample_vals[RIGHT_EYE_POS_X_IX],
                                      sample_vals[RIGHT_EYE_POS_Y_IX])
-                    ldegxy = pix2deg(sample_vals[LEFT_EYE_POS_X_IX],
+                        ldegxy = (sample_vals[LEFT_EYE_POS_X_IX],
                                      sample_vals[LEFT_EYE_POS_Y_IX])
+                    else:    
+                        rdegxy = pix2deg(sample_vals[RIGHT_EYE_POS_X_IX],
+                                         sample_vals[RIGHT_EYE_POS_Y_IX])
+                        ldegxy = pix2deg(sample_vals[LEFT_EYE_POS_X_IX],
+                                         sample_vals[LEFT_EYE_POS_Y_IX])
                     try:
                         sample_array_list.append(tuple(
                             session_info_vals + cv_vals + sample_vals + list(
@@ -342,17 +355,25 @@ def convertEDQ(hub_file, screen_measures, et_model):
             # process last target pos.
             cv_set = cv_rows[-1]
             cv_vals = [cv_set[cvf] for cvf in cv_fields]
-            tpdegxy = pix2deg(cv_vals[3], cv_vals[4])
+            tpdegxy = pix2deg(cv_vals[TARGET_POS_X_IX],
+                              cv_vals[TARGET_POS_Y_IX])
             targ_pos_samples = sample_table.where(
                 "(session_id == %d) & (time >= %.6f) & (time <= %.6f)" % (
                     cv_set['SESSION_ID'], cv_set['TRIAL_START'],
                     cv_set['TRIAL_END']))
             for sample in targ_pos_samples:
                 sample_vals = [sample[svn] for svn in sample_fields]
-                rdegxy = pix2deg(sample_vals[RIGHT_EYE_POS_X_IX],
+                
+                if et_model == 'dpi':
+                    rdegxy = (sample_vals[RIGHT_EYE_POS_X_IX],
                                  sample_vals[RIGHT_EYE_POS_Y_IX])
-                ldegxy = pix2deg(sample_vals[LEFT_EYE_POS_X_IX],
+                    ldegxy = (sample_vals[LEFT_EYE_POS_X_IX],
                                  sample_vals[LEFT_EYE_POS_Y_IX])
+                else:    
+                    rdegxy = pix2deg(sample_vals[RIGHT_EYE_POS_X_IX],
+                                     sample_vals[RIGHT_EYE_POS_Y_IX])
+                    ldegxy = pix2deg(sample_vals[LEFT_EYE_POS_X_IX],
+                                     sample_vals[LEFT_EYE_POS_Y_IX])
                 try:
                     sample_array_list.append(tuple(
                         session_info_vals + cv_vals + sample_vals + list(
@@ -432,13 +453,103 @@ def checkFileIntegrity(hub_file):
         return False
 
     return True
+    
 
+def filter_bilateral(data, sigmaSpace=0, d=-1, sigmaColor=0):
+    """
+    Filters DPI data using bilateral filter
+    
+    @author: Raimondas Zemblys
+    @email: raimondas.zemblys@humlab.lu.se
+    """ 
+    for _eye in ['left', 'right']:
+        for _unit in ['gaze', 'angle']:
+            for _dir in ['x', 'y']:
+                _key = '_'.join((_eye, _unit, _dir))
+                data[_key] = np.squeeze(cv2.bilateralFilter(data[_key], d,sigmaColor,sigmaSpace))
+    return data
+
+def handle_dpi_multisession(data):        
+    #Finds last block of calibration and Fixate-Saccade task
+    print 'Multisession DPI data found'
+    sessions = np.unique(data['session_id'])
+    print sessions
+    _fs = []
+    _cal = []
+    for session_id in sessions:
+        session_data = data['session_id'] == session_id
+        
+        DATA_SESSION = data[session_data]
+        cal_block = DATA_SESSION['BLOCK'] == 'DPICAL'
+        exp_block = DATA_SESSION['BLOCK'] == 'FS'
+        
+        _cal.append( len(np.unique(DATA_SESSION[cal_block]['ROW_INDEX'])))
+        _fs.append( len(np.unique(DATA_SESSION[exp_block]['ROW_INDEX'])))
+    
+    _fs_LastOcc = len(_fs) - 1 - _fs[::-1].index(49)
+    _cal_=_cal[:_fs_LastOcc+1]
+    _cal_LastOcc = len(_cal_) - 1 - _cal_[::-1].index(25)
+    
+    print _fs
+    print _cal
+    
+    print _fs_LastOcc, _cal_LastOcc
+    
+    session_data = data['session_id'] == sessions[_cal_LastOcc]
+    DATA_CAL=data[session_data]
+    cal_block = DATA_CAL['BLOCK'] == 'DPICAL'
+    DATA_CAL=DATA_CAL[cal_block]
+    
+    
+    session_data = data['session_id'] == sessions[_fs_LastOcc]
+    DATA_EXP=data[session_data]
+    exp_block = DATA_EXP['BLOCK'] == 'FS'
+    DATA_EXP=DATA_EXP[exp_block]        
+    
+    return np.hstack((DATA_CAL, DATA_EXP))
+    ### Handle multisession END ###
+
+def build_polynomial(X, Y, poly_type):
+    if poly_type == 'linear':
+        Px = np.vstack((X, np.ones(len(X)))).T
+        Py = np.vstack((Y, np.ones(len(Y)))).T
+
+    elif poly_type == 'villanueva':
+        Px = np.vstack((X**2, Y**2, X, Y, X*Y, np.ones(len(X)))).T
+        Py = np.vstack((X**2, Y**2, X, Y, X*Y, np.ones(len(X)))).T
+
+    return Px, Py 
 ############### MAIN RUNTIME SCRIPT ########################
 #
 # Below is the actual script that is run when this file is run through
 # the python interpreter. The code above defines functions used by the below
 # runtime script.
 #
+
+#DPI calibration config
+cal_points_sets = dict([
+    (5, np.array([0,4,12,20,24])), 
+    (9, np.array([0,2,4,10,12,14,20,22,24])), 
+    (14, np.array([1,2,35,7,9,11,12,13,15,17,19,21,22,23])),
+    (16, np.array([0,6,18,24,4,8,16,20,2,7,17,22,10,11,13,14])),
+    (17, np.array([0,6,12,18,24,4,8,16,20,2,7,17,22,10,11,13,14])),
+    (25, np.arange(25))
+])
+
+win_select_funcs = dict([
+    ('roll', detect_rollingWin)
+])
+
+calibration_settings_set = [{
+    'poly_type': 'villanueva',
+    'cal_point_set': 16,
+    'win_select_func': 'roll'
+}]
+
+win_size=0.1                
+window_skip = 0.2
+wsa='fiona'  
+
 if __name__ == '__main__':
     try:
         et_model_display_configs = dict()
@@ -497,20 +608,6 @@ if __name__ == '__main__':
             
             data_wide = np.array(wide_format_samples, dtype=wide_row_dtype)
             
-            #DPI calibration
-            if et_model == 'dpi':
-                print "DPI calibration"
-            
-            ### Trackloss filter DEMO START  ###
-            #TODO: Filter off-screen, off-pshysical limit samples
-            for eye in ['left', 'right']:
-                trackloss = (data_wide['_'.join((eye, 'gaze_x'))] == et_nan_values[et_model]['x']) | \
-                            (data_wide['_'.join((eye, 'gaze_y'))] == et_nan_values[et_model]['y'])
-                data_wide['_'.join((eye, 'gaze_x'))][trackloss] = np.nan
-                data_wide['_'.join((eye, 'gaze_y'))][trackloss] = np.nan
-                data_wide['_'.join((eye, 'angle_x'))][trackloss] = np.nan
-                data_wide['_'.join((eye, 'angle_y'))][trackloss] = np.nan
-            
 #            #Eye selection error 
             check_eye = dict()
             if data_wide['eyetracker_mode'][0] != 'Binocular':
@@ -528,7 +625,64 @@ if __name__ == '__main__':
                     eye_corr = check_eye.keys()[check_eye.values().index(False)].title()
                     data_wide['eyetracker_mode'] = eye_corr+' eye' 
             
+            #DPI calibration
+            if calibrate_dpi & (et_model == 'dpi'):
+                t1 = getTime()
+                print "DPI calibration"
+                
+                if (len(np.unique(data_wide['session_id'])) > 1):
+                    data_wide = handle_dpi_multisession(data_wide)
+                
+                data_wide = filter_trackloss(filter_bilateral(data_wide), et_model)
+                data_wide_raw = np.copy(data_wide)
+
+                poly_type = calibration_settings_set[0]['poly_type']
+                cal_point_set = calibration_settings_set[0]['cal_point_set']
+                win_select_func = calibration_settings_set[0]['win_select_func']
+                
+                cal_points = cal_points_sets[cal_point_set]
+                cal_block = data_wide['BLOCK'] == 'DPICAL'
+                exp_block = data_wide['BLOCK'] == 'FS'
+                DATA_CAL = data_wide[cal_block]
+#                DATA_EXP = data_wide[exp_block]
+                
+                args={
+                      'win_size': win_size,
+                      'window_skip': window_skip,
+                      'wsa': 'fiona'}
+
+                ### CALIBRATION START ###
+                #TODO: deal with missing calibration points
+                stim_CAL = win_select_funcs[win_select_func](DATA_CAL, **args)  
+                cal_ind=stim_CAL['ROW_INDEX'] == cal_points[:, None]
+                cal_ind=np.array(np.sum(cal_ind, axis=0), dtype=bool)
+                
+                #TODO: Handle missing calibration points: replace with random ones
+                
+                for eye in  parseTrackerMode(data_wide['eyetracker_mode'][0]):               
+                    for units in ['gaze', 'angle']:
+#                        plt.figure()
+                        Px, Py = build_polynomial(stim_CAL['_'.join((eye, units, 'fix_x'))][cal_ind], 
+                                                  stim_CAL['_'.join((eye, units, 'fix_y'))][cal_ind], poly_type)
+                        
+                        calX, calY = np.linalg.lstsq(Px, stim_CAL[stim_pos_mappings[units]+'x'][cal_ind])[0], \
+                                     np.linalg.lstsq(Py, stim_CAL[stim_pos_mappings[units]+'y'][cal_ind])[0]
+                        
+                        Px_data, Py_data = build_polynomial(data_wide_raw['_'.join((eye, units, 'x'))], 
+                                                            data_wide_raw['_'.join((eye, units, 'y'))] , poly_type)
+                        
+#                        plt.plot(data_wide_raw['_'.join((eye, units, 'x'))])
+#                        plt.plot(data_wide[stim_pos_mappings[units]+'x'])
+                        data_wide['_'.join((eye, units, 'x'))] = np.dot(Px_data, calX)
+                        data_wide['_'.join((eye, units, 'y'))] = np.dot(Py_data, calY)
+                        
+#                        plt.plot(data_wide['_'.join((eye, units, 'x'))])
+                
+                ### CALIBRATION END ###        
+                print 'DPI calibration duration: ', getTime()-t1     
+                
             #TODO: deal with multisession recordings
+            #      filter trackloss 
             
             print 'Conversion duration: ', getTime()-t0
 
