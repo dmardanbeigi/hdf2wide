@@ -19,7 +19,7 @@ The following eye tracker model data is handled by this script:
     tx300 
     x2
 
-  \* dpi data is exported as raw analog data in this version
+  \* For calibration details, see _**DPI calibration**_ below
 
 ##Results Files NOT Converted
 
@@ -99,6 +99,18 @@ The value saved to the eye position gaze x and y columns is dependant on the eye
     tx300 : -1
     x2 : -1
     dpi : -1000
+
+##DPI calibration
+DPI eye position data (raw analog data) is converted into screen pixel (and visual angle) positions using second degree polynomial mapping. Polynomial regression is used to find coeficients ax, ay, bx, by, cx, cy, dx, dy, ex, ey of:
+
+    X = ax v1^2+bx v2^2+cx v1v2+ dx v1+ex v2+fx
+    Y = ay v1^2+by v2^2+cy v1v2+ dy v1+ey v2+fy
+This mapping needs at least 16 calibration points. The 16 target points selected are uniformly distributed on the screen in order to get a good mapping of the whole screen area. Gaze _fixations_ were identified using running window of 100ms as median gaze position within each minRMS window.
+
+####TODO: 
+    +If either of calibration points are not available (because of trackloss), other point should be selected randomly
+
+    +Option to use less than 16 points
 
 #Running Conversion Script Locally
 
