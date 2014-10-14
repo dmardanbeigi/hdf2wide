@@ -101,11 +101,12 @@ The value saved to the eye position gaze x and y columns is dependant on the eye
     dpi : -1000
 
 ##DPI calibration
-DPI eye position data (raw analog data) is converted into screen pixel (and visual angle) positions using second degree polynomial mapping. Polynomial regression is used to find coeficients ax, ay, bx, by, cx, cy, dx, dy, ex, ey of:
+DPI eye position data (raw analog data) is converted into screen pixel positions using second degree polynomial mapping. Polynomial regression is used to find coeficients ax, ay, bx, by, cx, cy, dx, dy, ex, ey of:
 
     X = ax v1^2+bx v2^2+cx v1v2+ dx v1+ex v2+fx
     Y = ay v1^2+by v2^2+cy v1v2+ dy v1+ey v2+fy
 This mapping needs at least 16 calibration points. The 16 target points selected are uniformly distributed on the screen in order to get a good mapping of the whole screen area. Gaze _fixations_ were identified using running window of 100ms as median gaze position within each minRMS window.
+
 
 ####TODO: 
     +If either of calibration points are not available (because of trackloss), other point should be selected randomly
@@ -182,3 +183,5 @@ Script has number of adjustable settings. Open the run_conversion.py file in you
     * BLOCKS_TO_EXPORT : list of blocks to be exported: FS – Fixate-Saccade, SP – smooth pursuit, IMG – picture viewing task, TXT – sentence reading task, DPICAL – dpi calibration targets
     
     * FIX_DPI_CAL : set to True only if you're dealing with 2014 Apr-May EDQ recordings from Lund University, Humanities Laboratory. This fixes a bug with incorrect ROW_INDEX values in DPICAL block
+    
+    * calibrate_dpi : set to True if DPI data should be calibrated. If set to False, raw analog values are exported

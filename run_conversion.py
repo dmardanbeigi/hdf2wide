@@ -385,7 +385,7 @@ def convertEDQ(hub_file, screen_measures, et_model):
                     traceback.print_exc()
 
             sample_data_by_session.append(sample_array_list)
-    return sample_data_by_session
+    return sample_data_by_session, pix2deg
 
 
 def getScreenMeasurements(dpath, et_model_display_configs):
@@ -586,7 +586,7 @@ if __name__ == '__main__':
             if not checkFileIntegrity(hub_file):
                 continue
 
-            wide_format_samples_by_session = convertEDQ(hub_file,
+            wide_format_samples_by_session, pix2deg = convertEDQ(hub_file,
                                                         screen_measurments,
                                                         et_model)
             if wide_format_samples_by_session == None or len(
@@ -658,26 +658,29 @@ if __name__ == '__main__':
                 cal_ind=np.array(np.sum(cal_ind, axis=0), dtype=bool)
                 
                 #TODO: Handle missing calibration points: replace with random ones
-                
+                units = 'gaze'
                 for eye in  parseTrackerMode(data_wide['eyetracker_mode'][0]):               
-                    for units in ['gaze', 'angle']:
-#                        plt.figure()
-                        Px, Py = build_polynomial(stim_CAL['_'.join((eye, units, 'fix_x'))][cal_ind], 
-                                                  stim_CAL['_'.join((eye, units, 'fix_y'))][cal_ind], poly_type)
-                        
-                        calX, calY = np.linalg.lstsq(Px, stim_CAL[stim_pos_mappings[units]+'x'][cal_ind])[0], \
-                                     np.linalg.lstsq(Py, stim_CAL[stim_pos_mappings[units]+'y'][cal_ind])[0]
-                        
-                        Px_data, Py_data = build_polynomial(data_wide_raw['_'.join((eye, units, 'x'))], 
-                                                            data_wide_raw['_'.join((eye, units, 'y'))] , poly_type)
-                        
-#                        plt.plot(data_wide_raw['_'.join((eye, units, 'x'))])
-#                        plt.plot(data_wide[stim_pos_mappings[units]+'x'])
-                        data_wide['_'.join((eye, units, 'x'))] = np.dot(Px_data, calX)
-                        data_wide['_'.join((eye, units, 'y'))] = np.dot(Py_data, calY)
-                        
-#                        plt.plot(data_wide['_'.join((eye, units, 'x'))])
-                
+#                    plt.figure()
+                    Px, Py = build_polynomial(stim_CAL['_'.join((eye, units, 'fix_x'))][cal_ind], 
+                                              stim_CAL['_'.join((eye, units, 'fix_y'))][cal_ind], poly_type)
+                    
+                    calX, calY = np.linalg.lstsq(Px, stim_CAL[stim_pos_mappings[units]+'x'][cal_ind])[0], \
+                                 np.linalg.lstsq(Py, stim_CAL[stim_pos_mappings[units]+'y'][cal_ind])[0]
+                    
+                    Px_data, Py_data = build_polynomial(data_wide_raw['_'.join((eye, units, 'x'))], 
+                                                        data_wide_raw['_'.join((eye, units, 'y'))] , poly_type)
+                    
+#                    plt.plot(data_wide_raw['_'.join((eye, units, 'x'))])
+#                    plt.plot(data_wide[stim_pos_mappings[units]+'x'])
+                    data_wide['_'.join((eye, units, 'x'))] = np.dot(Px_data, calX)
+                    data_wide['_'.join((eye, units, 'y'))] = np.dot(Py_data, calY)
+                    
+                    plt.plot(data_wide['_'.join((eye, units, 'x'))])
+
+                    (data_wide['_'.join((eye, 'angle', 'x'))], 
+                     data_wide['_'.join((eye, 'angle', 'y'))])=pix2deg(data_wide['_'.join((eye, units, 'x'))],
+                                                                       data_wide['_'.join((eye, units, 'y'))])
+                                        
                 ### CALIBRATION END ###        
                 print 'DPI calibration duration: ', getTime()-t1     
                 
