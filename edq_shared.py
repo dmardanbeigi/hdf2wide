@@ -59,7 +59,38 @@ def rolling_window(a, window):
     strides = a.strides + (a.strides[-1],)
     return np.lib.stride_tricks.as_strided(a, shape=shape, strides=strides)        
 
+def add_field(a, descr):
+    """Return a new array that is like "a", but has additional fields.
 
+    Arguments:
+      a     -- a structured numpy array
+      descr -- a numpy type description of the new fields
+
+    The contents of "a" are copied over to the appropriate fields in
+    the new array, whereas the new fields are uninitialized.  The
+    arguments are not modified.
+
+    >>> sa = numpy.array([(1, 'Foo'), (2, 'Bar')], \
+                         dtype=[('id', int), ('name', 'S3')])
+    >>> sa.dtype.descr == numpy.dtype([('id', int), ('name', 'S3')])
+    True
+    >>> sb = add_field(sa, [('score', float)])
+    >>> sb.dtype.descr == numpy.dtype([('id', int), ('name', 'S3'), \
+                                       ('score', float)])
+    True
+    >>> numpy.all(sa['id'] == sb['id'])
+    True
+    >>> numpy.all(sa['name'] == sb['name'])
+    True
+    """
+    if a.dtype.fields is None:
+        raise ValueError, "`A' must be a structured numpy array"
+    b = np.zeros(a.shape, dtype=a.dtype.descr + descr)
+    for name in a.dtype.names:
+        b[name] = a[name]
+    return b
+    
+    
 ### VisualAngleCalc
 """
 Copied code from iohub
@@ -171,70 +202,74 @@ def detect_rollingWin(data, **args):
     win_size = args['win_size']
     win_size_sample = np.int16(win_size*data['eyetracker_sampling_rate'][0])
     window_skip = args['window_skip']
-    wsa = args['wsa']    
+    selection_algorithms = args['wsa']    
     
     measures=dict()
+    stim_full=[]
     for eye in parseTrackerMode(data['eyetracker_mode'][0]):   
             
         measures.update(rolling_measures(data, eye, 'gaze', win_size_sample))
         measures.update(rolling_measures(data, eye, 'angle', win_size_sample))
         
-        stim = initStim(data)
-
-        for stim_ind, stim_row in enumerate(stim):
-            
-            analysis_range = (data['time'] >= stim_row['TRIAL_START']+window_skip) \
-                           & (data['time'] <= stim_row['TRIAL_START']+1-win_size)
-            
-            analysis_range_full= (data['time'] >= stim_row['TRIAL_START']) \
-                               & (data['time'] <= stim_row['TRIAL_START']+1)
-            
-            #needs to be a number to identify starting sample of a window               
-            analysis_range=np.squeeze(np.argwhere(analysis_range==True))
-            analysis_range_full=np.squeeze(np.argwhere(analysis_range_full==True))
-                              
-            measures_rangeRMS = measures['_'.join((eye, 'angle', 'RMS'))][analysis_range]
-            measures_rangeACC = measures['_'.join((eye, 'angle', 'ACC'))][analysis_range]
-            measures_rangeSTD = measures['_'.join((eye, 'angle', 'STD'))][analysis_range]
-            
-            if wsa == 'fiona':
-                measures_range = measures_rangeRMS #Fiona RMS 
-            elif wsa == 'dixon1':
-                measures_range = measures_rangeACC*measures_rangeSTD #Dixons's measure No. 1
-            elif wsa == 'dixon2':
-                measures_range = measures_rangeACC+measures_rangeSTD #Dixons's measure No. 2
-            elif wsa == 'dixon3':
-                measures_range = measures_rangeACC**2+measures_rangeSTD**2 #Dixons's measure No. 3
-            elif wsa == 'jeff':
-                #Jeff's measure                        
-                std_thres = np.nanmin(measures_rangeSTD)*5
-                measures_rangeACC[measures_rangeSTD>std_thres] = np.nan
-                measures_range = measures_rangeACC
-            
-
-            if np.sum(np.isfinite(measures_range)) > 0: #handle all-nan slice
-                IND = analysis_range[np.nanargmin(measures_range)]
-                
-                #save measures to stim
-                stim['_'.join((eye, 'gaze', 'ind'))][stim_ind] = IND
-                stim['_'.join((eye, 'angle', 'ind'))][stim_ind] = IND
-                
-                stim['_'.join((eye, 'window_onset'))][stim_ind] = data['time'][IND]-stim_row['TRIAL_START']
-                stim['_'.join((eye, 'sample_count'))][stim_ind] = win_size_sample
-                stim['_'.join((eye, 'actual_win_size'))][stim_ind] = data['time'][IND+win_size_sample]-data['time'][IND]
-                
-                stim['invalid_sample_count'][stim_ind] = np.sum(np.isnan(data[eye+'_gaze_x'][analysis_range_full]) |
-                                                                np.isnan(data[eye+'_gaze_y'][analysis_range_full])
-                                                         )
-                
-                stim['wsa'][:] = wsa
-                stim['win_size'][:] =  win_size
-                stim['window_skip'][:] =  window_skip
-                
-                for key in measures.keys():
-                    stim[key][stim_ind]=measures[key][IND]  
+        for wsa in selection_algorithms:
+            stim = initStim(data)
     
-    return stim
+            for stim_ind, stim_row in enumerate(stim):
+                
+                analysis_range = (data['time'] >= stim_row['TRIAL_START']+window_skip) \
+                               & (data['time'] <= stim_row['TRIAL_START']+1-win_size)
+                
+                analysis_range_full= (data['time'] >= stim_row['TRIAL_START']) \
+                                   & (data['time'] <= stim_row['TRIAL_START']+1)
+                
+                #needs to be a number to identify starting sample of a window               
+                analysis_range=np.squeeze(np.argwhere(analysis_range==True))
+                analysis_range_full=np.squeeze(np.argwhere(analysis_range_full==True))
+                                  
+                measures_rangeRMS = measures['_'.join((eye, 'angle', 'RMS'))][analysis_range]
+                measures_rangeACC = measures['_'.join((eye, 'angle', 'ACC'))][analysis_range]
+                measures_rangeSTD = measures['_'.join((eye, 'angle', 'STD'))][analysis_range]
+                
+                if wsa == 'fiona':
+                    measures_range = measures_rangeRMS #Fiona RMS 
+                elif wsa == 'dixon1':
+                    measures_range = measures_rangeACC*measures_rangeSTD #Dixons's measure No. 1
+                elif wsa == 'dixon2':
+                    measures_range = measures_rangeACC+measures_rangeSTD #Dixons's measure No. 2
+                elif wsa == 'dixon3':
+                    measures_range = measures_rangeACC**2+measures_rangeSTD**2 #Dixons's measure No. 3
+                elif wsa == 'jeff':
+                    #Jeff's measure                        
+                    std_thres = np.nanmin(measures_rangeSTD)*5
+                    measures_rangeACC[measures_rangeSTD>std_thres] = np.nan
+                    measures_range = measures_rangeACC
+                
+    
+                if np.sum(np.isfinite(measures_range)) > 0: #handle all-nan slice
+                    IND = analysis_range[np.nanargmin(measures_range)]
+                    
+                    #save measures to stim
+                    stim['_'.join((eye, 'gaze', 'ind'))][stim_ind] = IND
+                    stim['_'.join((eye, 'angle', 'ind'))][stim_ind] = IND
+                    
+                    stim['_'.join((eye, 'window_onset'))][stim_ind] = data['time'][IND]-stim_row['TRIAL_START']
+                    stim['_'.join((eye, 'sample_count'))][stim_ind] = win_size_sample
+                    stim['_'.join((eye, 'actual_win_size'))][stim_ind] = data['time'][IND+win_size_sample]-data['time'][IND]
+                    
+                    stim['invalid_sample_count'][stim_ind] = np.sum(np.isnan(data[eye+'_gaze_x'][analysis_range_full]) |
+                                                                    np.isnan(data[eye+'_gaze_y'][analysis_range_full])
+                                                             )
+                    
+                    stim['wsa'][:] = wsa
+                    stim['win_size'][:] =  win_size
+                    stim['window_skip'][:] =  window_skip
+                    
+                    for key in measures.keys():
+                        stim[key][stim_ind]=measures[key][IND]  
+            
+            stim_full.extend(stim.tolist())
+                  
+    return np.array(stim_full, dtype=stim_dtype)
     
     
 def rolling_measures(data, eye, units, win_size):
