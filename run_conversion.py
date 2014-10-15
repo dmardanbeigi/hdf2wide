@@ -649,7 +649,7 @@ if __name__ == '__main__':
                 args={
                       'win_size': win_size,
                       'window_skip': window_skip,
-                      'wsa': 'fiona'}
+                      'wsa': ['fiona']}
 
                 ### CALIBRATION START ###
                 #TODO: deal with missing calibration points
