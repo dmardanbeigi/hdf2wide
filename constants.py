@@ -128,6 +128,7 @@ stim_dtype = np.dtype([
     ('win_size', np.float32),
     ('window_skip', np.float32),
     
+    ('total_sample_count', np.float32),
     ('invalid_sample_count', np.float32),
 
     ('left_gaze_ind', np.float32),

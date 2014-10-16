@@ -8,7 +8,7 @@ INCLUDE_TRACKERS = (
 #                    'eyelink', 
 #                    'eyetribe', 
 #                    'hispeed1250', 
-#                    'hispeed240',
+                    'hispeed240',
 #                    'red250', 
 #                    'red500', 
 #                    'redm', 
@@ -268,12 +268,12 @@ def convertEDQ(hub_file, screen_measures, et_model):
                 else:
                     sample_table = getEventTableForID(hub_file, MONOCULAR_EYE_SAMPLE)
                 
-#                if sample_table.nrows == 0:
-#
-#                    sample_table = getEventTableForID(hub_file, BINOCULAR_EYE_SAMPLE)
-#                    sample_fields = binoc_sample_fields
-#                else:
-#                    sample_fields = mono_sample_fields
+                    if sample_table.nrows == 0:
+    
+                        sample_table = getEventTableForID(hub_file, BINOCULAR_EYE_SAMPLE)
+                        sample_fields = binoc_sample_fields
+                    else:
+                        sample_fields = mono_sample_fields
 
             if et_model == 'eyetribe':
                 # Use raw_x, raw_y instead of gaze
@@ -675,7 +675,7 @@ if __name__ == '__main__':
                     data_wide['_'.join((eye, units, 'x'))] = np.dot(Px_data, calX)
                     data_wide['_'.join((eye, units, 'y'))] = np.dot(Py_data, calY)
                     
-                    plt.plot(data_wide['_'.join((eye, units, 'x'))])
+#                    plt.plot(data_wide['_'.join((eye, units, 'x'))])
 
                     (data_wide['_'.join((eye, 'angle', 'x'))], 
                      data_wide['_'.join((eye, 'angle', 'y'))])=pix2deg(data_wide['_'.join((eye, units, 'x'))],

@@ -184,7 +184,7 @@ def initStim(data):
                    data['target_angle_y'][stim_change_ind],
                    
                    wsa_list.tolist(),
-                   *np.zeros((65, stim_change_count)) * np.nan
+                   *np.zeros((66, stim_change_count)) * np.nan
                ), dtype=stim_dtype
            )
     
@@ -256,6 +256,7 @@ def detect_rollingWin(data, **args):
                     stim['_'.join((eye, 'sample_count'))][stim_ind] = win_size_sample
                     stim['_'.join((eye, 'actual_win_size'))][stim_ind] = data['time'][IND+win_size_sample]-data['time'][IND]
                     
+                    stim['total_sample_count'][stim_ind] = len(analysis_range_full)
                     stim['invalid_sample_count'][stim_ind] = np.sum(np.isnan(data[eye+'_gaze_x'][analysis_range_full]) |
                                                                     np.isnan(data[eye+'_gaze_y'][analysis_range_full])
                                                              )
