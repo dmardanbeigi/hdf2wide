@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-__author__ = 'Sol'
+__authors__ = 'Sol', 'r-zemblys'
 
 # ## CONVERSION SCRIPT SETTINGS ###
 INCLUDE_TRACKERS = (
@@ -543,6 +543,7 @@ win_select_funcs = dict([
 calibration_settings_set = [{
     'poly_type': 'villanueva',
     'cal_point_set': 16,
+    'min_cal_points': 16,
     'win_select_func': 'roll'
 }]
 
@@ -607,8 +608,9 @@ if __name__ == '__main__':
             scount += len(wide_format_samples)
             
             data_wide = np.array(wide_format_samples, dtype=wide_row_dtype)
+            #TODO: deal with multisession recordings
             
-#            #Eye selection error 
+            #Eye selection error 
             check_eye = dict()
             if data_wide['eyetracker_mode'][0] != 'Binocular':
                 eye = parseTrackerMode(data_wide['eyetracker_mode'][0])
@@ -638,11 +640,12 @@ if __name__ == '__main__':
 
                 poly_type = calibration_settings_set[0]['poly_type']
                 cal_point_set = calibration_settings_set[0]['cal_point_set']
+                min_cal_points = calibration_settings_set[0]['min_cal_points']
                 win_select_func = calibration_settings_set[0]['win_select_func']
                 
                 cal_points = cal_points_sets[cal_point_set]
                 cal_block = data_wide['BLOCK'] == 'DPICAL'
-                exp_block = data_wide['BLOCK'] == 'FS'
+#                exp_block = data_wide['BLOCK'] == 'FS'
                 DATA_CAL = data_wide[cal_block]
 #                DATA_EXP = data_wide[exp_block]
                 
@@ -652,13 +655,43 @@ if __name__ == '__main__':
                       'wsa': ['fiona']}
 
                 ### CALIBRATION START ###
-                #TODO: deal with missing calibration points
+                units = 'gaze'
+                
                 stim_CAL = win_select_funcs[win_select_func](DATA_CAL, **args)  
                 cal_ind=stim_CAL['ROW_INDEX'] == cal_points[:, None]
                 cal_ind=np.array(np.sum(cal_ind, axis=0), dtype=bool)
                 
-                #TODO: Handle missing calibration points: replace with random ones
-                units = 'gaze'
+                ###Handle missing calibration points: replace with random ones
+                stim_key_x = '_'.join((eye[0], units, 'fix', 'x'))
+                stim_key_y = '_'.join((eye[0], units, 'fix', 'y'))
+                if (np.isnan(stim_CAL[stim_key_x][cal_ind]).any()) | \
+                   (np.isnan(stim_CAL[stim_key_y][cal_ind]).any()):
+                    print 'Calibration points missing...Trying to replace'
+                    
+                    valid_cal_ind = np.bitwise_and(np.isfinite(stim_CAL[stim_key_x]), 
+                                                   np.isfinite(stim_CAL[stim_key_y])
+                                    )
+                    cal_ind = np.bitwise_and(cal_ind, valid_cal_ind)
+                    
+                    extra_cal_ind = np.bitwise_xor(valid_cal_ind, cal_ind)
+                    rand_p_count = cal_point_set-np.sum(cal_ind)
+                    rand_cal_ind = np.random.choice(np.arange(len(extra_cal_ind))[extra_cal_ind], rand_p_count)
+                    extra_cal_ind[:]=False
+                    extra_cal_ind[rand_cal_ind] = True
+                    
+                    cal_ind = np.bitwise_or(cal_ind, extra_cal_ind)
+                    
+                    if (np.sum(cal_ind)<min_cal_points):
+                        with open(OUTPUT_FOLDER + '/conversion_log.log', 'a') as _f:
+                            print 'Only %d points available..Skipping'%np.sum(cal_ind)
+                            _f.write('[CAL_SKIPPED]\tAvailable calibration points: {cal_p_available}, file: {file_path}\n'.format(cal_p_available=np.sum(cal_ind), file_path=file_path ))
+                        continue
+                    else:
+                        with open(OUTPUT_FOLDER + '/conversion_log.log', 'a') as _f:
+                            _f.write('[CAL_REPLACED]\tReplaced calibration points: {rand_p_count}, file: {file_path}\n'.format(rand_p_count=rand_p_count, file_path=file_path ))
+                    
+                ####
+                
                 for eye in  parseTrackerMode(data_wide['eyetracker_mode'][0]):               
 #                    plt.figure()
                     Px, Py = build_polynomial(stim_CAL['_'.join((eye, units, 'fix_x'))][cal_ind], 
@@ -681,11 +714,14 @@ if __name__ == '__main__':
                      data_wide['_'.join((eye, 'angle', 'y'))])=pix2deg(data_wide['_'.join((eye, units, 'x'))],
                                                                        data_wide['_'.join((eye, units, 'y'))])
                                         
-                ### CALIBRATION END ###        
-                print 'DPI calibration duration: ', getTime()-t1     
+                ### CALIBRATION END ###  
+                with open(OUTPUT_FOLDER + '/conversion_log.log', 'a') as _f:
+                    _f.write('[CAL_OK]\tCalibrated using {cal_p} points, file: {file_path}\n'.format(cal_p=np.sum(cal_ind), file_path=file_path ))
                 
-            #TODO: deal with multisession recordings
-            #      filter trackloss 
+                print 'DPI calibration duration: ', getTime()-t1     
+            
+            #Trackloss filter
+            data_wide = filter_trackloss(data_wide, et_model)
             
             print 'Conversion duration: ', getTime()-t0
 
