@@ -206,14 +206,13 @@ def detect_rollingWin(data, **args):
     
     measures=dict()
     stim_full=[]
-    for eye in parseTrackerMode(data['eyetracker_mode'][0]):   
-            
+    for eye in parseTrackerMode(data['eyetracker_mode'][0]):          
         measures.update(rolling_measures(data, eye, 'gaze', win_size_sample))
         measures.update(rolling_measures(data, eye, 'angle', win_size_sample))
         
-        for wsa in selection_algorithms:
-            stim = initStim(data)
-    
+    for wsa in selection_algorithms:
+        stim = initStim(data)
+        for eye in parseTrackerMode(data['eyetracker_mode'][0]):
             for stim_ind, stim_row in enumerate(stim):
                 
                 analysis_range = (data['time'] >= stim_row['TRIAL_START']+window_skip) \
@@ -225,7 +224,8 @@ def detect_rollingWin(data, **args):
                 #needs to be a number to identify starting sample of a window               
                 analysis_range=np.squeeze(np.argwhere(analysis_range==True))
                 analysis_range_full=np.squeeze(np.argwhere(analysis_range_full==True))
-                                  
+                
+                #TODO: window selection based on pixels or angles
                 measures_rangeRMS = measures['_'.join((eye, 'angle', 'RMS'))][analysis_range]
                 measures_rangeACC = measures['_'.join((eye, 'angle', 'ACC'))][analysis_range]
                 measures_rangeSTD = measures['_'.join((eye, 'angle', 'STD'))][analysis_range]
@@ -268,7 +268,7 @@ def detect_rollingWin(data, **args):
                     for key in measures.keys():
                         stim[key][stim_ind]=measures[key][IND]  
             
-            stim_full.extend(stim.tolist())
+        stim_full.extend(stim.tolist())
                   
     return np.array(stim_full, dtype=stim_dtype)
     
@@ -279,20 +279,21 @@ def rolling_measures(data, eye, units, win_size):
     
     @author: Raimondas Zemblys
     @email: raimondas.zemblys@humlab.lu.se
-    """    
-    #inter-sample distances
-    isd = np.diff(zip(data['_'.join((eye, units, 'x'))], 
-                      data['_'.join((eye, units, 'y'))]), axis=0)
-    isd = np.vstack((isd[:,0], isd[:,1], np.hypot(isd[:,0], isd[:,1]))).T
+    """  
     
-
     measures=dict()
     
-    #RMS
-    measures['_'.join((eye, units, 'RMS', 'x'))] = np.sqrt(np.mean(rolling_window(isd[:,0], win_size-1)**2, 1))
-    measures['_'.join((eye, units, 'RMS', 'y'))] = np.sqrt(np.mean(rolling_window(isd[:,1], win_size-1)**2, 1))
-    measures['_'.join((eye, units, 'RMS'))] = np.sqrt(np.mean(rolling_window(isd[:,2], win_size-1)**2, 1))
-    
+    #RMS    
+    isd = np.diff([data['_'.join((eye, units, 'x'))], 
+                   data['_'.join((eye, units, 'y'))]], axis=1).T
+
+    measures['_'.join((eye, units, 'RMS', 'x'))] = np.sqrt(np.mean(np.square(rolling_window(isd[:,0], win_size-1)), 1))
+    measures['_'.join((eye, units, 'RMS', 'y'))] = np.sqrt(np.mean(np.square(rolling_window(isd[:,1], win_size-1)), 1))    
+    measures['_'.join((eye, units, 'RMS'))] = np.hypot(measures['_'.join((eye, units, 'RMS', 'x'))],
+                                                       measures['_'.join((eye, units, 'RMS', 'y'))]   
+                                              )
+    ###
+                                              
     rolling_data_x = rolling_window(data['_'.join((eye, units, 'x'))], win_size)
     rolling_data_y = rolling_window(data['_'.join((eye, units, 'y'))], win_size)
     
@@ -313,9 +314,11 @@ def rolling_measures(data, eye, units, win_size):
                                                        measures['_'.join((eye, units, 'ACC', 'y'))]   
                                               )
     
+    #Fix
     measures['_'.join((eye, units, 'fix', 'x'))] = fix[0]
     measures['_'.join((eye, units, 'fix', 'y'))] = fix[1]
     
+    #Other measures
     measures['_'.join((eye, units, 'range', 'x'))] = np.nanmax(rolling_data_x, axis=1)-np.nanmin(rolling_data_x, axis=1)
     measures['_'.join((eye, units, 'range', 'y'))] = np.nanmax(rolling_data_y, axis=1)-np.nanmin(rolling_data_y, axis=1)
     
