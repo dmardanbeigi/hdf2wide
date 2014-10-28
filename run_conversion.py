@@ -4,21 +4,21 @@ __authors__ = 'Sol', 'r-zemblys'
 # ## CONVERSION SCRIPT SETTINGS ###
 INCLUDE_TRACKERS = (
                     'dpi',
-#                    'eyefollower', 
-#                    'eyelink', 
-#                    'eyetribe', 
-#                    'hispeed1250', 
+                    'eyefollower', 
+                    'eyelink', 
+                    'eyetribe', 
+                    'hispeed1250', 
                     'hispeed240',
-#                    'red250', 
-#                    'red500', 
-#                    'redm', 
-#                    't60xl', 
-#                    'tx300', 
-#                    'x2'
+                    'red250', 
+                    'red500', 
+                    'redm', 
+                    't60xl', 
+                    'tx300', 
+                    'x2'
 )
 
-#INCLUDE_SUB = 'ALL'
-INCLUDE_SUB = [3]
+INCLUDE_SUB = 'ALL'
+#INCLUDE_SUB = [3]
 
 INPUT_FILE_ROOT = r"/media/Data/EDQ/data"
 OUTPUT_FOLDER = r'/media/Data/EDQ/data_npy/'
@@ -543,11 +543,11 @@ win_select_funcs = dict([
 calibration_settings_set = [{
     'poly_type': 'villanueva',
     'cal_point_set': 16,
-    'min_cal_points': 16,
+    'min_cal_points': 8,
     'win_select_func': 'roll'
 }]
 
-win_size=0.1                
+win_size=0.175            
 window_skip = 0.2
 wsa='fiona'  
 
@@ -645,7 +645,7 @@ if __name__ == '__main__':
                 
                 cal_points = cal_points_sets[cal_point_set]
                 cal_block = data_wide['BLOCK'] == 'DPICAL'
-#                exp_block = data_wide['BLOCK'] == 'FS'
+                exp_block = data_wide['BLOCK'] == 'FS' #TODO: deal with other blocks
                 DATA_CAL = data_wide[cal_block]
 #                DATA_EXP = data_wide[exp_block]
                 
@@ -657,7 +657,13 @@ if __name__ == '__main__':
                 ### CALIBRATION START ###
                 units = 'gaze'
                 
-                stim_CAL = win_select_funcs[win_select_func](DATA_CAL, **args)  
+                stim_CAL = win_select_funcs[win_select_func](DATA_CAL, **args)
+                if len(stim_CAL)!=25:
+                    with open(OUTPUT_FOLDER + '/conversion_log.log', 'a') as _f:
+                        print 'Multiple calibrations per session...skipping'
+                        _f.write('[CAL_SKIPPED]\tMultiple calibrations per session, file: {file_path}\n'.format(file_path=file_path ))
+                    continue
+                    
                 cal_ind=stim_CAL['ROW_INDEX'] == cal_points[:, None]
                 cal_ind=np.array(np.sum(cal_ind, axis=0), dtype=bool)
                 
@@ -723,6 +729,10 @@ if __name__ == '__main__':
             #Trackloss filter
             data_wide = filter_trackloss(data_wide, et_model)
             
+            #Save only FS block
+            data_wide = data_wide[exp_block]
+            
+            
             print 'Conversion duration: ', getTime()-t0
 
             #Save
@@ -747,6 +757,21 @@ if __name__ == '__main__':
                 t0 = getTime()
                 save_as_txt(txt_file_name, data_wide)
                 print 'RAW_TXT save duration: ', getTime()-t0
+            
+#            fig = plt.figure()
+#            ax=plt.subplot(2,1,1)
+#            plt.plot(data_wide['time'], data_wide['right_angle_x'], 'r-')
+#            plt.plot(data_wide['time'], data_wide['target_angle_x'], 'k-')
+#            plt.ylim(-10,10)
+#            plt.xlim(data_wide['time'][0], data_wide['time'][-1])
+#            
+#            ax=plt.subplot(2,1,2)
+#            plt.plot(data_wide['time'], data_wide['right_angle_y'], 'r-')
+#            plt.plot(data_wide['time'], data_wide['target_angle_y'], 'k-')
+#            plt.ylim(-10,10)
+#            plt.xlim(data_wide['time'][0], data_wide['time'][-1])
+#            plt.savefig(np_file_name[:-3]+'png')
+#            plt.close(fig)
 
             hub_file.close()
             print 
