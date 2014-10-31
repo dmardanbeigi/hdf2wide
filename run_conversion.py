@@ -17,14 +17,14 @@ INCLUDE_TRACKERS = (
                     'x2'
 )
 
-INCLUDE_SUB = 'ALL'
-#INCLUDE_SUB = [3]
+#INCLUDE_SUB = 'ALL'
+INCLUDE_SUB = [3]
 
 INPUT_FILE_ROOT = r"/media/Data/EDQ/data"
 OUTPUT_FOLDER = r'/media/Data/EDQ/data_npy/'
 
 SAVE_NPY = True
-SAVE_TXT = False
+SAVE_TXT = True
 
 #DPICAL is required to calibrate DPI
 BLOCKS_TO_EXPORT = ['DPICAL', 'FS']
@@ -721,6 +721,9 @@ if __name__ == '__main__':
                                                                        data_wide['_'.join((eye, units, 'y'))])
                                         
                 ### CALIBRATION END ###  
+                #Save only FS block
+                data_wide = data_wide[exp_block]
+                
                 with open(OUTPUT_FOLDER + '/conversion_log.log', 'a') as _f:
                     _f.write('[CAL_OK]\tCalibrated using {cal_p} points, file: {file_path}\n'.format(cal_p=np.sum(cal_ind), file_path=file_path ))
                 
@@ -728,11 +731,7 @@ if __name__ == '__main__':
             
             #Trackloss filter
             data_wide = filter_trackloss(data_wide, et_model)
-            
-            #Save only FS block
-            data_wide = data_wide[exp_block]
-            
-            
+
             print 'Conversion duration: ', getTime()-t0
 
             #Save
