@@ -3,22 +3,22 @@ __authors__ = 'Sol', 'r-zemblys'
 
 # ## CONVERSION SCRIPT SETTINGS ###
 INCLUDE_TRACKERS = (
-                    'dpi',
-                    'eyefollower', 
-                    'eyelink', 
-                    'eyetribe', 
-                    'hispeed1250', 
+#                    'dpi',
+#                    'eyefollower', 
+#                    'eyelink', 
+#                    'eyetribe', 
+#                    'hispeed1250', 
                     'hispeed240',
-                    'red250', 
-                    'red500', 
-                    'redm', 
-                    't60xl', 
-                    'tx300', 
-                    'x2'
+#                    'red250', 
+#                    'red500', 
+#                    'redm', 
+#                    't60xl', 
+#                    'tx300', 
+#                    'x2'
 )
 
 #INCLUDE_SUB = 'ALL'
-INCLUDE_SUB = [3]
+INCLUDE_SUB = [185]
 
 INPUT_FILE_ROOT = r"/media/Data/EDQ/data"
 OUTPUT_FOLDER = r'/media/Data/EDQ/data_npy/'
@@ -569,6 +569,9 @@ if __name__ == '__main__':
         file_proc_count = 0
         total_file_count = len(DATA_FILES)
         hub_file = None
+        
+        file_log = open(OUTPUT_FOLDER + '/conversion.log', 'a')
+            
         for file_path in DATA_FILES:
             t0 = getTime()
             dpath, dfile = os.path.split(file_path)
@@ -608,9 +611,41 @@ if __name__ == '__main__':
             scount += len(wide_format_samples)
             
             data_wide = np.array(wide_format_samples, dtype=wide_row_dtype)
-            #TODO: deal with multisession recordings
             
-            #Eye selection error 
+            ### Deal with multisession recordings
+            if len(np.unique(data_wide['session_id'])) > 1:
+                print 'Multiple sessions found...selecting one with the least amount of trackloss'
+
+                tr_loss = []
+                for sid in np.unique(data_wide['session_id']):
+                    mask = data_wide['session_id']==sid
+                    
+                    _, loss_count = filter_trackloss(data_wide[mask], et_model)
+                    tr_loss.append((sid, loss_count))
+                
+                tr_loss = np.array(tr_loss)
+                sid = tr_loss[np.argmin(tr_loss[:,1]),0]
+                
+                mask = data_wide['session_id']==sid
+                data_wide = data_wide[mask]
+                
+                file_log.write('[MULTISESSION]\tfile: {file_path}\n'.format(file_path=file_path ))
+                
+#                fig = plt.figure()
+#                ax=plt.subplot(2,1,1)
+#                plt.plot(data_wide['time'][mask], data_wide['right_angle_x'][mask], 'r-')
+#                plt.plot(data_wide['time'][mask], data_wide['target_angle_x'][mask], 'k-')
+#                plt.ylim(-20,20)
+#                plt.xlim(data_wide['time'][mask][0], data_wide['time'][mask][-1])
+#                
+#                ax=plt.subplot(2,1,2)
+#                plt.plot(data_wide['time'][mask], data_wide['right_angle_y'][mask], 'r-')
+#                plt.plot(data_wide['time'][mask], data_wide['target_angle_y'][mask], 'k-')
+#                plt.ylim(-20,20)
+#                plt.xlim(data_wide['time'][mask][0], data_wide['time'][mask][-1])  
+            ###
+                            
+            ### Eye selection error 
             check_eye = dict()
             if data_wide['eyetracker_mode'][0] != 'Binocular':
                 eye = parseTrackerMode(data_wide['eyetracker_mode'][0])
@@ -621,13 +656,17 @@ if __name__ == '__main__':
                 
                 if check_eye['right'] &  check_eye['left']:
                     print "Recording does not contain any data...skipping"
+                    file_log.write('[NO_DATA]\tfile: {file_path}\n'.format(file_path=file_path ))
                     continue
                 elif check_eye[eye[0]]:
                     print "Eye selection error...correcting"
                     eye_corr = check_eye.keys()[check_eye.values().index(False)].title()
                     data_wide['eyetracker_mode'] = eye_corr+' eye' 
-            
-            #DPI calibration
+                    
+                    file_log.write('[EYE_SELECT_CORRECTION]\tfile: {file_path}\n'.format(file_path=file_path ))
+            ###
+                    
+            ### DPI
             if calibrate_dpi & (et_model == 'dpi'):
                 t1 = getTime()
                 print "DPI calibration"
@@ -635,7 +674,7 @@ if __name__ == '__main__':
                 if (len(np.unique(data_wide['session_id'])) > 1):
                     data_wide = handle_dpi_multisession(data_wide)
                 
-                data_wide = filter_trackloss(filter_bilateral(data_wide), et_model)
+                data_wide, _ = filter_trackloss(filter_bilateral(data_wide), et_model)
                 data_wide_raw = np.copy(data_wide)
 
                 poly_type = calibration_settings_set[0]['poly_type']
@@ -659,15 +698,14 @@ if __name__ == '__main__':
                 
                 stim_CAL = win_select_funcs[win_select_func](DATA_CAL, **args)
                 if len(stim_CAL)!=25:
-                    with open(OUTPUT_FOLDER + '/conversion_log.log', 'a') as _f:
-                        print 'Multiple calibrations per session...skipping'
-                        _f.write('[CAL_SKIPPED]\tMultiple calibrations per session, file: {file_path}\n'.format(file_path=file_path ))
+                    print 'Multiple calibrations per session...skipping'
+                    file_log.write('[DPI_CAL_SKIPPED]\tMultiple calibrations per session, file: {file_path}\n'.format(file_path=file_path ))
                     continue
                     
                 cal_ind=stim_CAL['ROW_INDEX'] == cal_points[:, None]
                 cal_ind=np.array(np.sum(cal_ind, axis=0), dtype=bool)
                 
-                ###Handle missing calibration points: replace with random ones
+                ### Handle missing calibration points: replace with random ones
                 stim_key_x = '_'.join((eye[0], units, 'fix', 'x'))
                 stim_key_y = '_'.join((eye[0], units, 'fix', 'y'))
                 if (np.isnan(stim_CAL[stim_key_x][cal_ind]).any()) | \
@@ -688,13 +726,11 @@ if __name__ == '__main__':
                     cal_ind = np.bitwise_or(cal_ind, extra_cal_ind)
                     
                     if (np.sum(cal_ind)<min_cal_points):
-                        with open(OUTPUT_FOLDER + '/conversion_log.log', 'a') as _f:
-                            print 'Only %d points available..Skipping'%np.sum(cal_ind)
-                            _f.write('[CAL_SKIPPED]\tAvailable calibration points: {cal_p_available}, file: {file_path}\n'.format(cal_p_available=np.sum(cal_ind), file_path=file_path ))
+                        print 'Only %d points available..Skipping'%np.sum(cal_ind)
+                        file_log.write('[DPI_CAL_SKIPPED]\tAvailable calibration points: {cal_p_available}, file: {file_path}\n'.format(cal_p_available=np.sum(cal_ind), file_path=file_path ))
                         continue
                     else:
-                        with open(OUTPUT_FOLDER + '/conversion_log.log', 'a') as _f:
-                            _f.write('[CAL_REPLACED]\tReplaced calibration points: {rand_p_count}, file: {file_path}\n'.format(rand_p_count=rand_p_count, file_path=file_path ))
+                        file_log.write('[DPI_CAL_REPLACED]\tReplaced calibration points: {rand_p_count}, file: {file_path}\n'.format(rand_p_count=rand_p_count, file_path=file_path ))
                     
                 ####
                 
@@ -720,17 +756,16 @@ if __name__ == '__main__':
                      data_wide['_'.join((eye, 'angle', 'y'))])=pix2deg(data_wide['_'.join((eye, units, 'x'))],
                                                                        data_wide['_'.join((eye, units, 'y'))])
                                         
-                ### CALIBRATION END ###  
+                ### DPI calibration END ### 
                 #Save only FS block
                 data_wide = data_wide[exp_block]
                 
-                with open(OUTPUT_FOLDER + '/conversion_log.log', 'a') as _f:
-                    _f.write('[CAL_OK]\tCalibrated using {cal_p} points, file: {file_path}\n'.format(cal_p=np.sum(cal_ind), file_path=file_path ))
+                file_log.write('[DPI_CAL_OK]\tCalibrated using {cal_p} points, file: {file_path}\n'.format(cal_p=np.sum(cal_ind), file_path=file_path ))
                 
                 print 'DPI calibration duration: ', getTime()-t1     
             
             #Trackloss filter
-            data_wide = filter_trackloss(data_wide, et_model)
+            data_wide, _ = filter_trackloss(data_wide, et_model)
 
             print 'Conversion duration: ', getTime()-t0
 
@@ -771,10 +806,14 @@ if __name__ == '__main__':
 #            plt.xlim(data_wide['time'][0], data_wide['time'][-1])
 #            plt.savefig(np_file_name[:-3]+'png')
 #            plt.close(fig)
+            
+            file_log.write('[CONVERSION_OK]\tfile: {file_path}\n'.format(file_path=file_path ))
 
             hub_file.close()
             print 
         end_time = getTime()
+        
+        file_log.close()
 
         print
         print 'Processed File Count:', file_proc_count
@@ -790,3 +829,6 @@ if __name__ == '__main__':
         if hub_file:
             hub_file.close()
             hub_file = None
+        if file_log:
+            file_log.close()
+            file_log = None
