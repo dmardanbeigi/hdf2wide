@@ -33,8 +33,9 @@ The following eye tracker model data has not been converted by this script becau
 
 ##Converted Data File Types
 The data files are converted into two file types:
-    * Tab delimited .txt : plain text files, open with anything, including Excel.
-    * NumPy .npy : binary NumPy files. Open using numpy.load() http://docs.scipy.org/doc/numpy/reference/generated/numpy.load.html. The data is returned as a numpy array of structured array elements.
+
+    *.txt - tab delimited plain text files, open with anything, including Excel.
+    *.npy - binary NumPy files. Open using numpy.load() http://docs.scipy.org/doc/numpy/reference/generated/numpy.load.html.
       
 ##Converted File Format
 Each saved file represents the data collected from 1 - N sessions / runs of the test, with one participant using one of the tested eye tracker models. Most files only have one session, while a minority have > 1 session saved to the same file. Data from different sessions within a single output file can be grouped by the session_id column.
@@ -105,13 +106,9 @@ DPI eye position data (raw analog data) is converted into screen pixel positions
 
     X = ax v1^2+bx v2^2+cx v1v2+ dx v1+ex v2+fx
     Y = ay v1^2+by v2^2+cy v1v2+ dy v1+ey v2+fy
-This mapping needs at least 16 calibration points. The 16 target points selected are uniformly distributed on the screen in order to get a good mapping of the whole screen area. Gaze _fixations_ were identified using running window of 100ms as median gaze position within each minRMS window.
-
-
-####TODO: 
-    +If either of calibration points are not available (because of trackloss), other point should be selected randomly
-
-    +Option to use less than 16 points
+This mapping needs at least 16 calibration points. The 16 target points selected are uniformly distributed on the screen in order to get a good mapping of the whole screen area. Gaze _fixations_ were identified using running window of 175ms as median gaze position within each minRMS window. 
+If it is not available to get _fixation_ for any of predefined calibration points due to trackloss, calibration point is replaced with randomly selected one. 
+By default 16 calibration points are used to perform calibration, but there is a possibility to calibrate using less points (see _**Script configuration**_ section below)
 
 #Running Conversion Script Locally
 
@@ -185,3 +182,5 @@ Script has number of adjustable settings. Open the run_conversion.py file in you
     * FIX_DPI_CAL : set to True only if you're dealing with 2014 Apr-May EDQ recordings from Lund University, Humanities Laboratory. This fixes a bug with incorrect ROW_INDEX values in DPICAL block
     
     * calibrate_dpi : set to True if DPI data should be calibrated. If set to False, raw analog values are exported
+    
+    * min_calibration_points : set the lower boundary of calibration points to be used when calibrating DPI. If it is not possible to calculate positions of 16 _fixations_, less calibration points can be used.
