@@ -334,7 +334,7 @@ def getGeometry(data):
     return np.mean((1/(np.degrees(2*np.arctan(data['screen_width']/(2*data['eye_distance'])))/data['display_width_pix']),
                     1/(np.degrees(2*np.arctan(data['screen_height']/(2*data['eye_distance'])))/data['display_height_pix'])))
                     
-def filter_trackloss(data, et_model=None, fill=np.nan):
+def filter_trackloss(data_wide, et_model=None, fill=np.nan):
     """
     Trackloss filter. Replaces invalid samples with /fill/
     
@@ -342,6 +342,7 @@ def filter_trackloss(data, et_model=None, fill=np.nan):
     @email: raimondas.zemblys@humlab.lu.se
     """   
     #TODO: Filter off-screen, off-pshysical limit samples
+    data = np.copy(data_wide) #remove if memory issues
     for eye in ['left', 'right']:
         trackloss = (data['_'.join((eye, 'gaze_x'))] == et_nan_values[et_model]['x']) | \
                     (data['_'.join((eye, 'gaze_y'))] == et_nan_values[et_model]['y'])
@@ -353,4 +354,4 @@ def filter_trackloss(data, et_model=None, fill=np.nan):
         data['_'.join((eye, 'angle_x'))][trackloss] = fill
         data['_'.join((eye, 'angle_y'))][trackloss] = fill
         
-    return data
+    return data, np.sum(trackloss)
