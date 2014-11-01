@@ -3,22 +3,22 @@ __authors__ = 'Sol', 'r-zemblys'
 
 # ## CONVERSION SCRIPT SETTINGS ###
 INCLUDE_TRACKERS = (
-#                    'dpi',
-#                    'eyefollower', 
-#                    'eyelink', 
-#                    'eyetribe', 
-#                    'hispeed1250', 
+                    'dpi',
+                    'eyefollower', 
+                    'eyelink', 
+                    'eyetribe', 
+                    'hispeed1250', 
                     'hispeed240',
-#                    'red250', 
-#                    'red500', 
-#                    'redm', 
-#                    't60xl', 
-#                    'tx300', 
-#                    'x2'
+                    'red250', 
+                    'red500', 
+                    'redm', 
+                    't60xl', 
+                    'tx300', 
+                    'x2'
 )
 
 #INCLUDE_SUB = 'ALL'
-INCLUDE_SUB = [185]
+INCLUDE_SUB = [3,185]
 
 INPUT_FILE_ROOT = r"/media/Data/EDQ/data"
 OUTPUT_FOLDER = r'/media/Data/EDQ/data_npy/'
@@ -611,39 +611,6 @@ if __name__ == '__main__':
             scount += len(wide_format_samples)
             
             data_wide = np.array(wide_format_samples, dtype=wide_row_dtype)
-            
-            ### Deal with multisession recordings
-            if len(np.unique(data_wide['session_id'])) > 1:
-                print 'Multiple sessions found...selecting one with the least amount of trackloss'
-
-                tr_loss = []
-                for sid in np.unique(data_wide['session_id']):
-                    mask = data_wide['session_id']==sid
-                    
-                    _, loss_count = filter_trackloss(data_wide[mask], et_model)
-                    tr_loss.append((sid, loss_count))
-                
-                tr_loss = np.array(tr_loss)
-                sid = tr_loss[np.argmin(tr_loss[:,1]),0]
-                
-                mask = data_wide['session_id']==sid
-                data_wide = data_wide[mask]
-                
-                file_log.write('[MULTISESSION]\tfile: {file_path}\n'.format(file_path=file_path ))
-                
-#                fig = plt.figure()
-#                ax=plt.subplot(2,1,1)
-#                plt.plot(data_wide['time'][mask], data_wide['right_angle_x'][mask], 'r-')
-#                plt.plot(data_wide['time'][mask], data_wide['target_angle_x'][mask], 'k-')
-#                plt.ylim(-20,20)
-#                plt.xlim(data_wide['time'][mask][0], data_wide['time'][mask][-1])
-#                
-#                ax=plt.subplot(2,1,2)
-#                plt.plot(data_wide['time'][mask], data_wide['right_angle_y'][mask], 'r-')
-#                plt.plot(data_wide['time'][mask], data_wide['target_angle_y'][mask], 'k-')
-#                plt.ylim(-20,20)
-#                plt.xlim(data_wide['time'][mask][0], data_wide['time'][mask][-1])  
-            ###
                             
             ### Eye selection error 
             check_eye = dict()
@@ -690,6 +657,7 @@ if __name__ == '__main__':
                 
                 args={
                       'win_size': win_size,
+                      'win_type': 'sample',
                       'window_skip': window_skip,
                       'wsa': ['fiona']}
 
@@ -735,7 +703,7 @@ if __name__ == '__main__':
                 ####
                 
                 for eye in  parseTrackerMode(data_wide['eyetracker_mode'][0]):               
-#                    plt.figure()
+
                     Px, Py = build_polynomial(stim_CAL['_'.join((eye, units, 'fix_x'))][cal_ind], 
                                               stim_CAL['_'.join((eye, units, 'fix_y'))][cal_ind], poly_type)
                     
@@ -745,12 +713,9 @@ if __name__ == '__main__':
                     Px_data, Py_data = build_polynomial(data_wide_raw['_'.join((eye, units, 'x'))], 
                                                         data_wide_raw['_'.join((eye, units, 'y'))] , poly_type)
                     
-#                    plt.plot(data_wide_raw['_'.join((eye, units, 'x'))])
-#                    plt.plot(data_wide[stim_pos_mappings[units]+'x'])
+
                     data_wide['_'.join((eye, units, 'x'))] = np.dot(Px_data, calX)
                     data_wide['_'.join((eye, units, 'y'))] = np.dot(Py_data, calY)
-                    
-#                    plt.plot(data_wide['_'.join((eye, units, 'x'))])
 
                     (data_wide['_'.join((eye, 'angle', 'x'))], 
                      data_wide['_'.join((eye, 'angle', 'y'))])=pix2deg(data_wide['_'.join((eye, units, 'x'))],
@@ -764,6 +729,39 @@ if __name__ == '__main__':
                 
                 print 'DPI calibration duration: ', getTime()-t1     
             
+            ### Deal with multisession recordings
+            if len(np.unique(data_wide['session_id'])) > 1:
+                print 'Multiple sessions found...selecting one with the least amount of trackloss'
+
+                tr_loss = []
+                for sid in np.unique(data_wide['session_id']):
+                    mask = data_wide['session_id']==sid
+                    
+                    _, loss_count = filter_trackloss(data_wide[mask], et_model)
+                    tr_loss.append((sid, loss_count))
+                
+                tr_loss = np.array(tr_loss)
+                sid = tr_loss[np.argmin(tr_loss[:,1]),0]
+                
+                mask = data_wide['session_id']==sid
+                data_wide = data_wide[mask]
+                
+                file_log.write('[MULTISESSION]\tfile: {file_path}\n'.format(file_path=file_path ))
+                
+#                fig = plt.figure()
+#                ax=plt.subplot(2,1,1)
+#                plt.plot(data_wide['time'][mask], data_wide['right_angle_x'][mask], 'r-')
+#                plt.plot(data_wide['time'][mask], data_wide['target_angle_x'][mask], 'k-')
+#                plt.ylim(-20,20)
+#                plt.xlim(data_wide['time'][mask][0], data_wide['time'][mask][-1])
+#                
+#                ax=plt.subplot(2,1,2)
+#                plt.plot(data_wide['time'][mask], data_wide['right_angle_y'][mask], 'r-')
+#                plt.plot(data_wide['time'][mask], data_wide['target_angle_y'][mask], 'k-')
+#                plt.ylim(-20,20)
+#                plt.xlim(data_wide['time'][mask][0], data_wide['time'][mask][-1])  
+            ###
+                
             #Trackloss filter
             data_wide, _ = filter_trackloss(data_wide, et_model)
 
