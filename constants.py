@@ -124,17 +124,17 @@ stim_dtype = np.dtype([
     ('target_angle_x', np.float32),
     ('target_angle_y', np.float32),
     
-    ('wsa', str, 32),
-    ('win_size', np.float32),
+    ('wsa', str, 32), #window selection algorithm
+    ('win_size', np.float32), #desired window size
     ('window_skip', np.float32),
     
     ('total_sample_count', np.float32),
-    ('invalid_sample_count', np.float32),
-
+    
+    ('left_invalid_sample_count', np.float32),
     ('left_gaze_ind', np.float32),
-    ('left_window_onset', np.float32),
-    ('left_sample_count', np.float32),
-    ('left_actual_win_size', np.float32),
+    ('left_gaze_window_onset', np.float32),
+    ('left_gaze_sample_count', np.float32),
+    ('left_gaze_actual_win_size', np.float32),
     ('left_gaze_ACC', np.float32),
     ('left_gaze_ACC_x', np.float32),
     ('left_gaze_ACC_y', np.float32),
@@ -148,7 +148,11 @@ stim_dtype = np.dtype([
     ('left_gaze_fix_y', np.float32),
     ('left_gaze_range_x', np.float32),
     ('left_gaze_range_y', np.float32),
+    
     ('left_angle_ind', np.float32),
+    ('left_angle_window_onset', np.float32),
+    ('left_angle_sample_count', np.float32),
+    ('left_angle_actual_win_size', np.float32),
     ('left_angle_ACC', np.float32),
     ('left_angle_ACC_x', np.float32),
     ('left_angle_ACC_y', np.float32),
@@ -163,11 +167,11 @@ stim_dtype = np.dtype([
     ('left_angle_range_x', np.float32),
     ('left_angle_range_y', np.float32),
     
-
+    ('right_invalid_sample_count', np.float32),
     ('right_gaze_ind', np.float32),
-    ('right_window_onset', np.float32),
-    ('right_sample_count', np.float32),
-    ('right_actual_win_size', np.float32),
+    ('right_gaze_window_onset', np.float32),
+    ('right_gaze_sample_count', np.float32),
+    ('right_gaze_actual_win_size', np.float32),
     ('right_gaze_ACC', np.float32),
     ('right_gaze_ACC_x', np.float32),
     ('right_gaze_ACC_y', np.float32),
@@ -181,7 +185,11 @@ stim_dtype = np.dtype([
     ('right_gaze_fix_y', np.float32),
     ('right_gaze_range_x', np.float32),
     ('right_gaze_range_y', np.float32),
+    
     ('right_angle_ind', np.float32),
+    ('right_angle_window_onset', np.float32),
+    ('right_angle_sample_count', np.float32),
+    ('right_angle_actual_win_size', np.float32),
     ('right_angle_ACC', np.float32),
     ('right_angle_ACC_x', np.float32),
     ('right_angle_ACC_y', np.float32),
