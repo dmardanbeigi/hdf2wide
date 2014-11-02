@@ -19,7 +19,7 @@ def get_git_local_changed():
     import subprocess
     local_repo_status = subprocess.check_output(['git', 'status'])
     return local_repo_status.find(
-        'nothing to commit, working directory clean') == -1 and \
+        'nothing to commit (working directory clean)') == -1 and \
            local_repo_status.find('branch is up-to-date') == -1
 
 def get_git_revision_hash(branch_name='HEAD'):
@@ -185,7 +185,7 @@ def initStim(data):
                    data['target_angle_y'][stim_change_ind],
                    
                    wsa_list.tolist(),
-                   *np.zeros((73, stim_change_count)) * np.nan
+                   *np.zeros((109, stim_change_count)) * np.nan
                ), dtype=stim_dtype
            )
     
@@ -259,13 +259,14 @@ def detect_rollingWin(data, **args):
 
                     if np.sum(np.isfinite(measures_range)) > 0: #handle all-nan slice
                         IND = analysis_range[np.nanargmin(measures_range)]
-                        
+
                         #save measures to stim
                         stim['_'.join((eye, units, 'ind'))][stim_ind] = IND
                         stim['_'.join((eye, units, 'window_onset'))][stim_ind] = data['time'][IND]-stim_row['TRIAL_START']
-
-                        for key in measures.keys():
+                        
+                        for key in filter(lambda x: '_'.join((eye, units)) in x, measures.keys()):
                             stim[key][stim_ind]=measures[key][IND]  
+                        
             
         stim_full.extend(stim.tolist())
                   
@@ -281,6 +282,20 @@ def rolling_measures_sample(data, eye, units, win_size_sample):
     """  
     measures=dict()
     
+    rolling_data_x = rolling_window(data['_'.join((eye, units, 'x'))], win_size_sample)
+    rolling_data_y = rolling_window(data['_'.join((eye, units, 'y'))], win_size_sample)
+    
+    #Position error
+    err_x = data['_'.join((eye, units, 'x'))] - data[stim_pos_mappings[units]+'x']
+    err_y = data['_'.join((eye, units, 'y'))] - data[stim_pos_mappings[units]+'y']
+    
+    rolling_err_x = rolling_window(err_x, win_size_sample)
+    rolling_err_y = rolling_window(err_y, win_size_sample)
+    
+    rolling_time = rolling_window(data['time'], win_size_sample)
+    measures['_'.join((eye, units, 'sample_count'))] = np.ones(len(rolling_time)) * win_size_sample
+    measures['_'.join((eye, units, 'actual_win_size'))] = rolling_time[:,-1]-rolling_time[:,0]
+    
     #RMS    
     isd = np.diff([data['_'.join((eye, units, 'x'))], 
                    data['_'.join((eye, units, 'y'))]], axis=1).T
@@ -290,39 +305,50 @@ def rolling_measures_sample(data, eye, units, win_size_sample):
     measures['_'.join((eye, units, 'RMS'))] = np.hypot(measures['_'.join((eye, units, 'RMS', 'x'))],
                                                        measures['_'.join((eye, units, 'RMS', 'y'))]   
                                               )
+    #RMS of PE
+    isd = np.diff([err_x, err_y], axis=1).T
+    measures['_'.join((eye, units, 'RMS_PE', 'x'))] = np.sqrt(np.mean(np.square(rolling_window(isd[:,0], win_size_sample-1)), 1))
+    measures['_'.join((eye, units, 'RMS_PE', 'y'))] = np.sqrt(np.mean(np.square(rolling_window(isd[:,1], win_size_sample-1)), 1))    
+    measures['_'.join((eye, units, 'RMS_PE'))] = np.hypot(measures['_'.join((eye, units, 'RMS_PE', 'x'))],
+                                                          measures['_'.join((eye, units, 'RMS_PE', 'y'))]   
+                                                 )
     ###
-                                              
-    rolling_data_x = rolling_window(data['_'.join((eye, units, 'x'))], win_size_sample)
-    rolling_data_y = rolling_window(data['_'.join((eye, units, 'y'))], win_size_sample)
-    rolling_time = rolling_window(data['time'], win_size_sample)
-    
-    measures['_'.join((eye, units, 'sample_count'))] = np.ones(len(rolling_data_x)) * win_size_sample
-    measures['_'.join((eye, units, 'actual_win_size'))] = rolling_time[:,-1]-rolling_time[:,0]
-    
-    #STD  
+                                                
+    ### STD  
     measures['_'.join((eye, units, 'STD', 'x'))] = np.std(rolling_data_x, axis=1)
     measures['_'.join((eye, units, 'STD', 'y'))] = np.std(rolling_data_y, axis=1)
     measures['_'.join((eye, units, 'STD'))] = np.hypot(measures['_'.join((eye, units, 'STD', 'x'))],
-                                                       measures['_'.join((eye, units, 'STD', 'y'))]   
-                                              )
-    
-    #ACC
-    fix = [np.median(rolling_data_x, axis=1),
-           np.median(rolling_data_y, axis=1)]
-
-    measures['_'.join((eye, units, 'ACC', 'x'))] = fix[0] - data[stim_pos_mappings[units]+'x'][:-win_size_sample+1]
-    measures['_'.join((eye, units, 'ACC', 'y'))] = fix[1] - data[stim_pos_mappings[units]+'y'][:-win_size_sample+1]
+                                                          measures['_'.join((eye, units, 'STD', 'y'))]   
+                                                 )
+    #STD of PE                                             
+    measures['_'.join((eye, units, 'STD_PE', 'x'))] = np.std(rolling_err_x, axis=1)
+    measures['_'.join((eye, units, 'STD_PE', 'y'))] = np.std(rolling_err_y, axis=1)
+    measures['_'.join((eye, units, 'STD_PE'))] = np.hypot(measures['_'.join((eye, units, 'STD_PE', 'x'))],
+                                                          measures['_'.join((eye, units, 'STD_PE', 'y'))]   
+                                                 )
+    ###
+                                              
+    ###ACC
+    measures['_'.join((eye, units, 'ACC', 'x'))] = np.median(rolling_err_x, axis=1)
+    measures['_'.join((eye, units, 'ACC', 'y'))] = np.median(rolling_err_y, axis=1)
     measures['_'.join((eye, units, 'ACC'))] = np.hypot(measures['_'.join((eye, units, 'ACC', 'x'))],
                                                        measures['_'.join((eye, units, 'ACC', 'y'))]   
                                               )
-    
+    #Absolute accuracy
+    measures['_'.join((eye, units, 'ACC_abs', 'x'))] = np.median(np.abs(rolling_err_x), axis=1)
+    measures['_'.join((eye, units, 'ACC_abs', 'y'))] = np.median(np.abs(rolling_err_y), axis=1)
+    measures['_'.join((eye, units, 'ACC_abs'))] = np.hypot(measures['_'.join((eye, units, 'ACC_abs', 'x'))],
+                                                           measures['_'.join((eye, units, 'ACC_abs', 'y'))]   
+                                                  )
     #Fix
-    measures['_'.join((eye, units, 'fix', 'x'))] = fix[0]
-    measures['_'.join((eye, units, 'fix', 'y'))] = fix[1]
+    measures['_'.join((eye, units, 'fix', 'x'))] = np.median(rolling_data_x, axis=1)
+    measures['_'.join((eye, units, 'fix', 'y'))] = np.median(rolling_data_y, axis=1)
+    ###
     
-    #Other measures
+    ###Other measures
     measures['_'.join((eye, units, 'range', 'x'))] = np.max(rolling_data_x, axis=1)-np.min(rolling_data_x, axis=1)
     measures['_'.join((eye, units, 'range', 'y'))] = np.max(rolling_data_y, axis=1)-np.min(rolling_data_y, axis=1)
+    ###
     
     return measures
 

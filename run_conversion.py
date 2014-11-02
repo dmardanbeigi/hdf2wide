@@ -17,14 +17,14 @@ INCLUDE_TRACKERS = (
                     'x2'
 )
 
-#INCLUDE_SUB = 'ALL'
-INCLUDE_SUB = [3,185]
+INCLUDE_SUB = 'ALL'
+#INCLUDE_SUB = [9]
 
 INPUT_FILE_ROOT = r"/media/Data/EDQ/data"
 OUTPUT_FOLDER = r'/media/Data/EDQ/data_npy/'
 
 SAVE_NPY = True
-SAVE_TXT = True
+SAVE_TXT = False
 
 #DPICAL is required to calibrate DPI
 BLOCKS_TO_EXPORT = ['DPICAL', 'FS']
@@ -196,7 +196,10 @@ def getSessionDataFromMsgEvents(hub_file):
         for msg in msg_event_text:
             msplit = msg.split(':')
             _msg_event_dict[msplit[0].strip()] = [t.strip() for t in msplit[1:]]
-
+            
+            if msg.find('ioHub Experiment started') > -1:
+                _msg_event_dict['exp_date'] = [msg.strip('ioHub Experiment started')]
+        
         # Parse out (painfully) the data of interest
         for org_title, txt_title in msg_txt_mappings.iteritems():
             msg_data = _msg_event_dict.get(org_title)
@@ -209,7 +212,7 @@ def getSessionDataFromMsgEvents(hub_file):
                     session_info[txt_title] = num(pstr[0][1:])
                     session_info[msg_txt_mappings['Stimulus Screen ID2']] = num(
                         pstr[1][:-1])
-
+    
     return session_infos
 
 
@@ -385,7 +388,7 @@ def convertEDQ(hub_file, screen_measures, et_model):
                     traceback.print_exc()
 
             sample_data_by_session.append(sample_array_list)
-    return sample_data_by_session, pix2deg
+    return sample_data_by_session
 
 
 def getScreenMeasurements(dpath, et_model_display_configs):
@@ -506,7 +509,7 @@ def handle_dpi_multisession(data):
     exp_block = DATA_EXP['BLOCK'] == 'FS'
     DATA_EXP=DATA_EXP[exp_block]        
     
-    return np.hstack((DATA_CAL, DATA_EXP))
+    return np.hstack((DATA_CAL, DATA_EXP)), sessions[_cal_LastOcc], sessions[_fs_LastOcc]
     ### Handle multisession END ###
 
 def build_polynomial(X, Y, poly_type):
@@ -552,47 +555,50 @@ window_skip = 0.2
 wsa='fiona'  
 
 if __name__ == '__main__':
-    try:
-        et_model_display_configs = dict()
-        scount = 0
+    et_model_display_configs = dict()
+    scount = 0
 
-        start_time = getTime()
+    start_time = getTime()
 
-        if not os.path.exists(OUTPUT_FOLDER):
-            os.mkdir(OUTPUT_FOLDER)
+    if not os.path.exists(OUTPUT_FOLDER):
+        os.mkdir(OUTPUT_FOLDER)
 
-        col_count = len(wide_row_dtype.names)
-        format_str = "{}\t" * col_count
-        format_str = format_str[:-1] + "\n"
-        row_names = wide_row_dtype.names
-        header_line = '\t'.join(row_names) + '\n'
-        file_proc_count = 0
-        total_file_count = len(DATA_FILES)
-        hub_file = None
-        
+    col_count = len(wide_row_dtype.names)
+    format_str = "{}\t" * col_count
+    format_str = format_str[:-1] + "\n"
+    row_names = wide_row_dtype.names
+    header_line = '\t'.join(row_names) + '\n'
+    file_proc_count = 0
+    total_file_count = len(DATA_FILES)
+    hub_file = None
+    
+    
+    for file_path in DATA_FILES:
         file_log = open(OUTPUT_FOLDER + '/conversion.log', 'a')
-            
-        for file_path in DATA_FILES:
+        try:
+#        if 1:
             t0 = getTime()
             dpath, dfile = os.path.split(file_path)
             print "Processing file %d / %d. \r" % (
                 file_proc_count + 1, total_file_count),
             screen_measurments, et_model = getScreenMeasurements(file_path,
                                                                  et_model_display_configs)
-
+    
             if et_model == 'eyetribe':
                 # open eyetribe files in update mode so time stamp issue can
                 # be fixed in files.
                 hub_file = openHubFile(dpath, dfile, 'a')
             else:
                 hub_file = openHubFile(dpath, dfile, 'r')
-
+    
             if not checkFileIntegrity(hub_file):
+                file_log.write('[FILE_CORRUPT]\tfile: {file_path}\n'.format(file_path=file_path ))
                 continue
-
-            wide_format_samples_by_session, pix2deg = convertEDQ(hub_file,
+    
+            wide_format_samples_by_session = convertEDQ(hub_file,
                                                         screen_measurments,
-                                                        et_model)
+                                                        et_model
+                                             )
             if wide_format_samples_by_session == None or len(
                     wide_format_samples_by_session) == 0:
                 print "\n>>>>>>\nERROR processing Hdf5 file: %s\n\tFile has " \
@@ -601,13 +607,14 @@ if __name__ == '__main__':
                 if hub_file:
                     hub_file.close()
                     hub_file = None
+                file_log.write('[NO_BLOCK_DATA]\tfile: {file_path}\n'.format(file_path=file_path ))
                 continue
-
+    
             file_proc_count += 1
             wide_format_samples = []
             for output_samples in wide_format_samples_by_session:
                 wide_format_samples.extend(output_samples)
-
+    
             scount += len(wide_format_samples)
             
             data_wide = np.array(wide_format_samples, dtype=wide_row_dtype)
@@ -637,13 +644,22 @@ if __name__ == '__main__':
             if calibrate_dpi & (et_model == 'dpi'):
                 t1 = getTime()
                 print "DPI calibration"
-                
+    
                 if (len(np.unique(data_wide['session_id'])) > 1):
-                    data_wide = handle_dpi_multisession(data_wide)
+                    data_wide, _, exp_session_id = handle_dpi_multisession(data_wide)
+                else:
+                    exp_session_id = data_wide['session_id'][0]
                 
+                #Conversion to degrees
+                session_info_dict = getSessionDataFromMsgEvents(hub_file)
+                display_size_pix = session_info_dict[exp_session_id]['display_width_pix'], session_info_dict[exp_session_id]['display_height_pix']    
+                display_size_mm = screen_measurments['screen_width'], screen_measurments['screen_height']                
+                pix2deg = VisualAngleCalc(display_size_mm, display_size_pix,
+                                          screen_measurments['eye_distance']).pix2deg
+                 
                 data_wide, _ = filter_trackloss(filter_bilateral(data_wide), et_model)
                 data_wide_raw = np.copy(data_wide)
-
+    
                 poly_type = calibration_settings_set[0]['poly_type']
                 cal_point_set = calibration_settings_set[0]['cal_point_set']
                 min_cal_points = calibration_settings_set[0]['min_cal_points']
@@ -653,14 +669,14 @@ if __name__ == '__main__':
                 cal_block = data_wide['BLOCK'] == 'DPICAL'
                 exp_block = data_wide['BLOCK'] == 'FS' #TODO: deal with other blocks
                 DATA_CAL = data_wide[cal_block]
-#                DATA_EXP = data_wide[exp_block]
-                
+    #                DATA_EXP = data_wide[exp_block]
+    
                 args={
                       'win_size': win_size,
                       'win_type': 'sample',
                       'window_skip': window_skip,
                       'wsa': ['fiona']}
-
+    
                 ### CALIBRATION START ###
                 units = 'gaze'
                 
@@ -703,7 +719,7 @@ if __name__ == '__main__':
                 ####
                 
                 for eye in  parseTrackerMode(data_wide['eyetracker_mode'][0]):               
-
+    
                     Px, Py = build_polynomial(stim_CAL['_'.join((eye, units, 'fix_x'))][cal_ind], 
                                               stim_CAL['_'.join((eye, units, 'fix_y'))][cal_ind], poly_type)
                     
@@ -713,10 +729,10 @@ if __name__ == '__main__':
                     Px_data, Py_data = build_polynomial(data_wide_raw['_'.join((eye, units, 'x'))], 
                                                         data_wide_raw['_'.join((eye, units, 'y'))] , poly_type)
                     
-
+    
                     data_wide['_'.join((eye, units, 'x'))] = np.dot(Px_data, calX)
                     data_wide['_'.join((eye, units, 'y'))] = np.dot(Py_data, calY)
-
+    
                     (data_wide['_'.join((eye, 'angle', 'x'))], 
                      data_wide['_'.join((eye, 'angle', 'y'))])=pix2deg(data_wide['_'.join((eye, units, 'x'))],
                                                                        data_wide['_'.join((eye, units, 'y'))])
@@ -732,7 +748,7 @@ if __name__ == '__main__':
             ### Deal with multisession recordings
             if len(np.unique(data_wide['session_id'])) > 1:
                 print 'Multiple sessions found...selecting one with the least amount of trackloss'
-
+    
                 tr_loss = []
                 for sid in np.unique(data_wide['session_id']):
                     mask = data_wide['session_id']==sid
@@ -764,9 +780,9 @@ if __name__ == '__main__':
                 
             #Trackloss filter
             data_wide, _ = filter_trackloss(data_wide, et_model)
-
+    
             print 'Conversion duration: ', getTime()-t0
-
+    
             #Save
             if SAVE_NPY:
                 et_dir = nabs(r"%s/%s" % (OUTPUT_FOLDER, et_model))
@@ -790,43 +806,40 @@ if __name__ == '__main__':
                 save_as_txt(txt_file_name, data_wide)
                 print 'RAW_TXT save duration: ', getTime()-t0
             
-#            fig = plt.figure()
-#            ax=plt.subplot(2,1,1)
-#            plt.plot(data_wide['time'], data_wide['right_angle_x'], 'r-')
-#            plt.plot(data_wide['time'], data_wide['target_angle_x'], 'k-')
-#            plt.ylim(-10,10)
-#            plt.xlim(data_wide['time'][0], data_wide['time'][-1])
-#            
-#            ax=plt.subplot(2,1,2)
-#            plt.plot(data_wide['time'], data_wide['right_angle_y'], 'r-')
-#            plt.plot(data_wide['time'], data_wide['target_angle_y'], 'k-')
-#            plt.ylim(-10,10)
-#            plt.xlim(data_wide['time'][0], data_wide['time'][-1])
-#            plt.savefig(np_file_name[:-3]+'png')
-#            plt.close(fig)
+#            if calibrate_dpi & (et_model == 'dpi'):            
+#                fig = plt.figure()
+#                ax=plt.subplot(2,1,1)
+#                plt.plot(data_wide['time'], data_wide['right_angle_x'], 'r-')
+#                plt.plot(data_wide['time'], data_wide['target_angle_x'], 'k-')
+#                plt.ylim(-10,10)
+#                plt.xlim(data_wide['time'][0], data_wide['time'][-1])
+#                
+#                ax=plt.subplot(2,1,2)
+#                plt.plot(data_wide['time'], data_wide['right_angle_y'], 'r-')
+#                plt.plot(data_wide['time'], data_wide['target_angle_y'], 'k-')
+#                plt.ylim(-10,10)
+#                plt.xlim(data_wide['time'][0], data_wide['time'][-1])
+#                plt.savefig(np_file_name[:-3]+'png')
+#                plt.close(fig)
             
             file_log.write('[CONVERSION_OK]\tfile: {file_path}\n'.format(file_path=file_path ))
-
+    
             hub_file.close()
-            print 
-        end_time = getTime()
-        
-        file_log.close()
-
-        print
-        print 'Processed File Count:', file_proc_count
-        print 'Total Samples Selected for Output:', scount
-        print "Total Run Time:", (end_time - start_time)
-        print "Samples / Second:", scount / (end_time - start_time)
-
-    except Exception, e:
-        import traceback
-
-        traceback.print_exc()
-    finally:
-        if hub_file:
-            hub_file.close()
-            hub_file = None
-        if file_log:
             file_log.close()
-            file_log = None
+            print
+        except:
+            print 'Conversion error...skipping'
+            file_log.write('[CONVERSION_ERROR]\tfile: {file_path}\n'.format(file_path=file_path ))
+            if hub_file:
+                hub_file.close()
+                hub_file = None
+            if file_log:
+                file_log.close()
+            
+    end_time = getTime()
+  
+    print
+    print 'Processed File Count:', file_proc_count
+    print 'Total Samples Selected for Output:', scount
+    print "Total Run Time:", (end_time - start_time)
+    print "Samples / Second:", scount / (end_time - start_time)
