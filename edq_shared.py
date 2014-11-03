@@ -427,7 +427,9 @@ def filter_trackloss(data_wide, et_model=None, fill=np.nan):
     data = np.copy(data_wide) #remove if memory issues
     for eye in ['left', 'right']:
         trackloss = (data['_'.join((eye, 'gaze_x'))] == et_nan_values[et_model]['x']) | \
-                    (data['_'.join((eye, 'gaze_y'))] == et_nan_values[et_model]['y'])
+                    (data['_'.join((eye, 'gaze_y'))] == et_nan_values[et_model]['y']) | \
+                    (np.isnan(data['_'.join((eye, 'gaze_x'))])) | \
+                    (np.isnan(data['_'.join((eye, 'gaze_y'))]))
         if et_model == 'dpi':
             trackloss = np.bitwise_or(trackloss, data['status'] < 4.0)
             
