@@ -247,6 +247,13 @@ stim_pos_mappings=dict([
     ('angle','target_angle_'),
     ('gaze', 'pos'),
     ])
+
+#Multisession special cases    
+smc_dtype = np.dtype([
+    ('subject_id', np.uint8),
+    ('eyetracker_model', str, 32),
+    ('session_id', np.uint8),
+])
 # iohub EventConstants values, as of June 13th, 2014.
 # Copied so that iohub does not need to be a dependency of conversion script
 KEYBOARD_INPUT = 20

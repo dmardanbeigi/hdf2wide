@@ -423,9 +423,10 @@ def filter_trackloss(data_wide, et_model=None, fill=np.nan):
     @author: Raimondas Zemblys
     @email: raimondas.zemblys@humlab.lu.se
     """   
-    #TODO: Filter off-screen, off-pshysical limit samples
+    loss_count = dict()
     data = np.copy(data_wide) #remove if memory issues
     for eye in ['left', 'right']:
+        #TODO: Filter off-screen, off-pshysical limit samples
         trackloss = (data['_'.join((eye, 'gaze_x'))] == et_nan_values[et_model]['x']) | \
                     (data['_'.join((eye, 'gaze_y'))] == et_nan_values[et_model]['y']) | \
                     (np.isnan(data['_'.join((eye, 'gaze_x'))])) | \
@@ -438,4 +439,12 @@ def filter_trackloss(data_wide, et_model=None, fill=np.nan):
         data['_'.join((eye, 'angle_x'))][trackloss] = fill
         data['_'.join((eye, 'angle_y'))][trackloss] = fill
         
-    return data, np.sum(trackloss)
+        loss_count[eye] = np.sum(trackloss)
+    
+    if data['eyetracker_mode'][0] == 'Binocular':
+        loss_count['avg'] = np.mean((loss_count['right'], loss_count['left']))
+    else:
+        eye = parseTrackerMode(data_wide['eyetracker_mode'][0])[0]
+        loss_count['avg'] = loss_count[eye]
+        
+    return data, loss_count

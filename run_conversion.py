@@ -17,6 +17,21 @@ INCLUDE_TRACKERS = (
                     'x2'
 )
 
+MONOCULAR_TRACKERS = (
+                    'dpi',
+#                    'eyefollower', 
+                    'eyelink', 
+#                    'eyetribe', 
+                    'hispeed1250', 
+                    'hispeed240',
+#                    'red250', 
+#                    'red500', 
+                    'redm', 
+#                    't60xl', 
+#                    'tx300', 
+#                    'x2'
+)
+
 INCLUDE_SUB = 'ALL'
 #INCLUDE_SUB = [9]
 
@@ -53,6 +68,7 @@ from constants import (MONOCULAR_EYE_SAMPLE, BINOCULAR_EYE_SAMPLE, MESSAGE,
                        MULTI_CHANNEL_ANALOG_INPUT,
                        wide_row_dtype, msg_txt_mappings,
                        dpi_cal_fix, stim_pos_mappings,
+                       smc_dtype
 )
                        
 from edq_shared import (getFullOutputFolderPath, nabs, 
@@ -522,6 +538,13 @@ def build_polynomial(X, Y, poly_type):
         Py = np.vstack((X**2, Y**2, X, Y, X*Y, np.ones(len(X)))).T
 
     return Px, Py 
+
+#Custom exception
+class ConversionError(RuntimeError):
+   def __init__(self, arg):
+      self.args = arg
+      self.message = arg
+      
 ############### MAIN RUNTIME SCRIPT ########################
 #
 # Below is the actual script that is run when this file is run through
@@ -554,6 +577,16 @@ win_size=0.175
 window_skip = 0.2
 wsa='fiona'  
 
+### Manual multisession handler
+special_multisession_cases = []
+special_multisession_cases.append((121, 'eyelink', 1))
+special_multisession_cases.append((124, 'eyelink', 2))
+special_multisession_cases.append((91, 'red250', 1))
+special_multisession_cases.append((95, 'red250', 2))
+special_multisession_cases.append((84, 'red500', 1))
+special_multisession_cases.append((87, 'red500', 2))
+special_multisession_cases=np.array(special_multisession_cases, dtype=smc_dtype)
+
 if __name__ == '__main__':
     et_model_display_configs = dict()
     scount = 0
@@ -579,10 +612,14 @@ if __name__ == '__main__':
 #        if 1:
             t0 = getTime()
             dpath, dfile = os.path.split(file_path)
-            print "Processing file %d / %d. \r" % (
-                file_proc_count + 1, total_file_count),
-            screen_measurments, et_model = getScreenMeasurements(file_path,
-                                                                 et_model_display_configs)
+            print "Processing file %d / %d. \r" % (file_proc_count + 1, total_file_count)
+                
+            et_model, sub = getInfoFromPath(file_path)
+            print 'tracker: {et_model}, sub: {sub}'.format(et_model=et_model, sub=sub)
+            
+            et_dir = nabs(r"%s/%s" % (OUTPUT_FOLDER, et_model))
+            if not os.path.exists(et_dir):
+                os.mkdir(et_dir)
     
             if et_model == 'eyetribe':
                 # open eyetribe files in update mode so time stamp issue can
@@ -590,25 +627,22 @@ if __name__ == '__main__':
                 hub_file = openHubFile(dpath, dfile, 'a')
             else:
                 hub_file = openHubFile(dpath, dfile, 'r')
-    
+            
             if not checkFileIntegrity(hub_file):
-                file_log.write('[FILE_CORRUPT]\tfile: {file_path}\n'.format(file_path=file_path ))
-                continue
-    
+#                file_log.write('[FILE_CORRUPT]\tfile: {file_path}\n'.format(file_path=file_path ))
+                raise ConversionError(str("FILE_CORRUPT"))
+            
+            screen_measurments, et_model = getScreenMeasurements(file_path, et_model_display_configs)
             wide_format_samples_by_session = convertEDQ(hub_file,
                                                         screen_measurments,
                                                         et_model
                                              )
-            if wide_format_samples_by_session == None or len(
-                    wide_format_samples_by_session) == 0:
+            if wide_format_samples_by_session == None or len(wide_format_samples_by_session) == 0:
                 print "\n>>>>>>\nERROR processing Hdf5 file: %s\n\tFile has " \
-                      "no 'FS' BLOCK COND VARS.\n\tSKIPPING FILE.\n<<<<<<\n" % (
-                          file_path)
-                if hub_file:
-                    hub_file.close()
-                    hub_file = None
-                file_log.write('[NO_BLOCK_DATA]\tfile: {file_path}\n'.format(file_path=file_path ))
-                continue
+                      "no 'FS' BLOCK COND VARS.\n\tSKIPPING FILE.\n<<<<<<\n" % (file_path)
+#                file_log.write('[NO_BLOCK_DATA]\tfile: {file_path}\n'.format(file_path=file_path ))
+                raise ConversionError(str("NO_BLOCK_DATA"))
+#                continue
     
             file_proc_count += 1
             wide_format_samples = []
@@ -617,225 +651,309 @@ if __name__ == '__main__':
     
             scount += len(wide_format_samples)
             
-            data_wide = np.array(wide_format_samples, dtype=wide_row_dtype)
-                            
-            ### Eye selection error 
-            check_eye = dict()
-            if data_wide['eyetracker_mode'][0] != 'Binocular':
-                eye = parseTrackerMode(data_wide['eyetracker_mode'][0])
-                
-                #Becomes True if all nans found                
-                check_eye['right'] = sum(np.isnan(data_wide['right_gaze_x'])) == len(data_wide['right_gaze_x'])
-                check_eye['left'] = sum(np.isnan(data_wide['left_gaze_x'])) == len(data_wide['left_gaze_x'])
-                
-                if check_eye['right'] &  check_eye['left']:
-                    print "Recording does not contain any data...skipping"
-                    file_log.write('[NO_DATA]\tfile: {file_path}\n'.format(file_path=file_path ))
-                    continue
-                elif check_eye[eye[0]]:
-                    print "Eye selection error...correcting"
-                    eye_corr = check_eye.keys()[check_eye.values().index(False)].title()
-                    data_wide['eyetracker_mode'] = eye_corr+' eye' 
-                    
-                    file_log.write('[EYE_SELECT_CORRECTION]\tfile: {file_path}\n'.format(file_path=file_path ))
-            ###
-                    
-            ### DPI
-            if calibrate_dpi & (et_model == 'dpi'):
-                t1 = getTime()
-                print "DPI calibration"
-    
-                if (len(np.unique(data_wide['session_id'])) > 1):
-                    data_wide, _, exp_session_id = handle_dpi_multisession(data_wide)
-                else:
-                    exp_session_id = data_wide['session_id'][0]
-                
-                #Conversion to degrees
-                session_info_dict = getSessionDataFromMsgEvents(hub_file)
-                display_size_pix = session_info_dict[exp_session_id]['display_width_pix'], session_info_dict[exp_session_id]['display_height_pix']    
-                display_size_mm = screen_measurments['screen_width'], screen_measurments['screen_height']                
-                pix2deg = VisualAngleCalc(display_size_mm, display_size_pix,
-                                          screen_measurments['eye_distance']).pix2deg
-                 
-                data_wide, _ = filter_trackloss(filter_bilateral(data_wide), et_model)
-                data_wide_raw = np.copy(data_wide)
-    
-                poly_type = calibration_settings_set[0]['poly_type']
-                cal_point_set = calibration_settings_set[0]['cal_point_set']
-                min_cal_points = calibration_settings_set[0]['min_cal_points']
-                win_select_func = calibration_settings_set[0]['win_select_func']
-                
-                cal_points = cal_points_sets[cal_point_set]
-                cal_block = data_wide['BLOCK'] == 'DPICAL'
-                exp_block = data_wide['BLOCK'] == 'FS' #TODO: deal with other blocks
-                DATA_CAL = data_wide[cal_block]
-    #                DATA_EXP = data_wide[exp_block]
-    
-                args={
-                      'win_size': win_size,
-                      'win_type': 'sample',
-                      'window_skip': window_skip,
-                      'wsa': ['fiona']}
-    
-                ### CALIBRATION START ###
-                units = 'gaze'
-                
-                stim_CAL = win_select_funcs[win_select_func](DATA_CAL, **args)
-                if len(stim_CAL)!=25:
-                    print 'Multiple calibrations per session...skipping'
-                    file_log.write('[DPI_CAL_SKIPPED]\tMultiple calibrations per session, file: {file_path}\n'.format(file_path=file_path ))
-                    continue
-                    
-                cal_ind=stim_CAL['ROW_INDEX'] == cal_points[:, None]
-                cal_ind=np.array(np.sum(cal_ind, axis=0), dtype=bool)
-                
-                ### Handle missing calibration points: replace with random ones
-                stim_key_x = '_'.join((eye[0], units, 'fix', 'x'))
-                stim_key_y = '_'.join((eye[0], units, 'fix', 'y'))
-                if (np.isnan(stim_CAL[stim_key_x][cal_ind]).any()) | \
-                   (np.isnan(stim_CAL[stim_key_y][cal_ind]).any()):
-                    print 'Calibration points missing...Trying to replace'
-                    
-                    valid_cal_ind = np.bitwise_and(np.isfinite(stim_CAL[stim_key_x]), 
-                                                   np.isfinite(stim_CAL[stim_key_y])
-                                    )
-                    cal_ind = np.bitwise_and(cal_ind, valid_cal_ind)
-                    
-                    extra_cal_ind = np.bitwise_xor(valid_cal_ind, cal_ind)
-                    rand_p_count = cal_point_set-np.sum(cal_ind)
-                    rand_cal_ind = np.random.choice(np.arange(len(extra_cal_ind))[extra_cal_ind], rand_p_count)
-                    extra_cal_ind[:]=False
-                    extra_cal_ind[rand_cal_ind] = True
-                    
-                    cal_ind = np.bitwise_or(cal_ind, extra_cal_ind)
-                    
-                    if (np.sum(cal_ind)<min_cal_points):
-                        print 'Only %d points available..Skipping'%np.sum(cal_ind)
-                        file_log.write('[DPI_CAL_SKIPPED]\tAvailable calibration points: {cal_p_available}, file: {file_path}\n'.format(cal_p_available=np.sum(cal_ind), file_path=file_path ))
-                        continue
-                    else:
-                        file_log.write('[DPI_CAL_REPLACED]\tReplaced calibration points: {rand_p_count}, file: {file_path}\n'.format(rand_p_count=rand_p_count, file_path=file_path ))
-                    
-                ####
-                
-                for eye in  parseTrackerMode(data_wide['eyetracker_mode'][0]):               
-    
-                    Px, Py = build_polynomial(stim_CAL['_'.join((eye, units, 'fix_x'))][cal_ind], 
-                                              stim_CAL['_'.join((eye, units, 'fix_y'))][cal_ind], poly_type)
-                    
-                    calX, calY = np.linalg.lstsq(Px, stim_CAL[stim_pos_mappings[units]+'x'][cal_ind])[0], \
-                                 np.linalg.lstsq(Py, stim_CAL[stim_pos_mappings[units]+'y'][cal_ind])[0]
-                    
-                    Px_data, Py_data = build_polynomial(data_wide_raw['_'.join((eye, units, 'x'))], 
-                                                        data_wide_raw['_'.join((eye, units, 'y'))] , poly_type)
-                    
-    
-                    data_wide['_'.join((eye, units, 'x'))] = np.dot(Px_data, calX)
-                    data_wide['_'.join((eye, units, 'y'))] = np.dot(Py_data, calY)
-    
-                    (data_wide['_'.join((eye, 'angle', 'x'))], 
-                     data_wide['_'.join((eye, 'angle', 'y'))])=pix2deg(data_wide['_'.join((eye, units, 'x'))],
-                                                                       data_wide['_'.join((eye, units, 'y'))])
-                                        
-                ### DPI calibration END ### 
-                #Save only FS block
-                data_wide = data_wide[exp_block]
-                
-                file_log.write('[DPI_CAL_OK]\tCalibrated using {cal_p} points, file: {file_path}\n'.format(cal_p=np.sum(cal_ind), file_path=file_path ))
-                
-                print 'DPI calibration duration: ', getTime()-t1     
+            data_wide = np.array(wide_format_samples, dtype=wide_row_dtype)            
+            tracking_eye = parseTrackerMode(data_wide['eyetracker_mode'][0])
             
-            ### Deal with multisession recordings
-            if len(np.unique(data_wide['session_id'])) > 1:
-                print 'Multiple sessions found...selecting one with the least amount of trackloss'
-    
-                tr_loss = []
-                for sid in np.unique(data_wide['session_id']):
-                    mask = data_wide['session_id']==sid
+            if (et_model == 'dpi'):
+                ### Handle DPI data START ###
+                data_wide, _ = filter_trackloss(filter_bilateral(data_wide), et_model)
+            
+                if calibrate_dpi:
+                    t1 = getTime()
+                    print "DPI calibration"
+        
+                    if (len(np.unique(data_wide['session_id'])) > 1):
+                        data_wide, _, exp_session_id = handle_dpi_multisession(data_wide)
+                    else:
+                        exp_session_id = data_wide['session_id'][0]
+                                        
+                    #Conversion to degrees
+                    session_info_dict = getSessionDataFromMsgEvents(hub_file)
+                    session_info = session_info_dict[exp_session_id]
+                    display_size_pix = session_info['display_width_pix'], session_info['display_height_pix']    
+                    display_size_mm = screen_measurments['screen_width'], screen_measurments['screen_height']                
+                    pix2deg = VisualAngleCalc(display_size_mm, display_size_pix,
+                                              screen_measurments['eye_distance']).pix2deg
+        
+                    poly_type = calibration_settings_set[0]['poly_type']
+                    cal_point_set = calibration_settings_set[0]['cal_point_set']
+                    min_cal_points = calibration_settings_set[0]['min_cal_points']
+                    win_select_func = calibration_settings_set[0]['win_select_func']
                     
-                    _, loss_count = filter_trackloss(data_wide[mask], et_model)
-                    tr_loss.append((sid, loss_count))
+                    cal_points = cal_points_sets[cal_point_set]
+                    cal_block = data_wide['BLOCK'] == 'DPICAL'
+                    exp_block = data_wide['BLOCK'] == 'FS' #TODO: deal with other blocks
+                    DATA_CAL = data_wide[cal_block]
+        
+                    args={
+                          'win_size': win_size,
+                          'win_type': 'sample',
+                          'window_skip': window_skip,
+                          'wsa': ['fiona']}
+                    units = 'gaze'
+                    
+                    ### CALIBRATION START ###
+                    data_wide_raw = np.copy(data_wide)
+  
+                    stim_CAL = win_select_funcs[win_select_func](DATA_CAL, **args)
+                    if len(stim_CAL)!=25:
+                        if hub_file:
+                            hub_file.close()
+                            hub_file = None
+                        print 'Multiple calibrations per session...skipping'
+                        raise ConversionError(str("DPI_CAL_SKIPPED"))
+#                        file_log.write('[DPI_CAL_SKIPPED]\tfile: {file_path}\tMultiple calibrations per session\n'.format(file_path=file_path ))
+#                        continue
+                        
+                    cal_ind=stim_CAL['ROW_INDEX'] == cal_points[:, None]
+                    cal_ind=np.array(np.sum(cal_ind, axis=0), dtype=bool)
+                    
+                    ### Handle missing calibration points: replace with random ones
+                    stim_key_x = '_'.join((tracking_eye[0], units, 'fix', 'x'))
+                    stim_key_y = '_'.join((tracking_eye[0], units, 'fix', 'y'))
+                    if (np.isnan(stim_CAL[stim_key_x][cal_ind]).any()) | \
+                       (np.isnan(stim_CAL[stim_key_y][cal_ind]).any()):
+                        print 'Calibration points missing...Trying to replace'
+                        
+                        valid_cal_ind = np.bitwise_and(np.isfinite(stim_CAL[stim_key_x]), 
+                                                       np.isfinite(stim_CAL[stim_key_y])
+                                        )
+                        cal_ind = np.bitwise_and(cal_ind, valid_cal_ind)
+                        
+                        extra_cal_ind = np.bitwise_xor(valid_cal_ind, cal_ind)
+                        rand_p_count = cal_point_set-np.sum(cal_ind)
+                        rand_cal_ind = np.random.choice(np.arange(len(extra_cal_ind))[extra_cal_ind], rand_p_count)
+                        extra_cal_ind[:]=False
+                        extra_cal_ind[rand_cal_ind] = True
+                        
+                        cal_ind = np.bitwise_or(cal_ind, extra_cal_ind)
+                        
+                        if (np.sum(cal_ind)<min_cal_points):
+                            if hub_file:
+                                hub_file.close()
+                                hub_file = None
+                            print 'Only %d points available..Skipping'%np.sum(cal_ind)
+                            raise ConversionError(str("DPI_CAL_SKIPPED"))
+#                            file_log.write('[DPI_CAL_SKIPPED]\tfile: {file_path}\tAvailable calibration points: {cal_p_available}\n'.format(cal_p_available=np.sum(cal_ind), file_path=file_path ))
+#                            continue
+                        else:
+                            file_log.write('[DPI_CAL_REPLACED]\tfile: {file_path}\Replaced calibration points: {rand_p_count}\n'.format(rand_p_count=rand_p_count, file_path=file_path ))
+                        
+                    ####
+                    
+                    for eye in tracking_eye:               
+        
+                        Px, Py = build_polynomial(stim_CAL['_'.join((eye, units, 'fix_x'))][cal_ind], 
+                                                  stim_CAL['_'.join((eye, units, 'fix_y'))][cal_ind], poly_type)
+                        
+                        calX, calY = np.linalg.lstsq(Px, stim_CAL[stim_pos_mappings[units]+'x'][cal_ind])[0], \
+                                     np.linalg.lstsq(Py, stim_CAL[stim_pos_mappings[units]+'y'][cal_ind])[0]
+                        
+                        Px_data, Py_data = build_polynomial(data_wide_raw['_'.join((eye, units, 'x'))], 
+                                                            data_wide_raw['_'.join((eye, units, 'y'))] , poly_type)
+                        
+        
+                        data_wide['_'.join((eye, units, 'x'))] = np.dot(Px_data, calX)
+                        data_wide['_'.join((eye, units, 'y'))] = np.dot(Py_data, calY)
+        
+                        (data_wide['_'.join((eye, 'angle', 'x'))], 
+                         data_wide['_'.join((eye, 'angle', 'y'))])=pix2deg(data_wide['_'.join((eye, units, 'x'))],
+                                                                           data_wide['_'.join((eye, units, 'y'))])
+                                            
+                    ### DPI calibration END ### 
+                    
+                    #Save only FS block
+                    data_wide = data_wide[exp_block]
+                    
+                    file_log.write('[DPI_CAL_OK]\tfile: {file_path}\tCalibrated using {cal_p} points\n'.format(cal_p=np.sum(cal_ind), file_path=file_path ))
+                    
+                    print 'DPI calibration duration: ', getTime()-t1  
+                    
+                    #DPI plot
+                    _, loss_count = filter_trackloss(data_wide, et_model)
+                    loss_count = loss_count['avg']
+                    fig = plt.figure()
+                    plt.suptitle('Operator: {operator}, trackloss: {loss:.2f} %'.format(operator=data_wide['operator'][0], 
+                                                                                    loss=100*float(loss_count)/np.sum(exp_block)
+                                                                             )
+                    )
+                    ax=plt.subplot(2,1,1)
+                    plt.plot(data_wide['time'], data_wide['right_angle_x'], 'r-')
+                    plt.plot(data_wide['time'], data_wide['target_angle_x'], 'k-')
+                    plt.ylim(-10,10)
+                    plt.xlim(data_wide['time'][0], data_wide['time'][-1])
+                    
+                    ax=plt.subplot(2,1,2)
+                    plt.plot(data_wide['time'], data_wide['right_angle_y'], 'r-')
+                    plt.plot(data_wide['time'], data_wide['target_angle_y'], 'k-')
+                    plt.ylim(-10,10)
+                    plt.xlim(data_wide['time'][0], data_wide['time'][-1])
+                    plt.savefig('{output_dir}/{et_model}/sub_{sub}.png'.format(output_dir=OUTPUT_FOLDER, 
+                                                                                                      et_model=et_model,
+                                                                                                      sub=sub,
+                                                                                                )
+                    )
+                    fig.clf()
+                    plt.close(fig)
+                    fig = None
+
+                ### Handle DPI data END ###
                 
-                tr_loss = np.array(tr_loss)
-                sid = tr_loss[np.argmin(tr_loss[:,1]),0]
+            else:
+                ### Handle VOG data START ###
+                data_wide, _ = filter_trackloss(data_wide, et_model)
                 
-                mask = data_wide['session_id']==sid
-                data_wide = data_wide[mask]
+                #All targets check
+                if len(np.unique(data_wide['ROW_INDEX']))!=49:
+                    if hub_file:
+                        hub_file.close()
+                        hub_file = None
+                    print "Not enough data recorded...skipping"      
+                    raise ConversionError(str("NO_DATA_STIM"))
+#                    file_log.write('[NO_DATA_STIM]\tfile: {file_path}\n'.format(file_path=file_path ))
+#                    continue    
                 
-                file_log.write('[MULTISESSION]\tfile: {file_path}\n'.format(file_path=file_path ))
+                ### Eye selection check 
+                check_eye = dict()
+                if data_wide['eyetracker_mode'][0] == 'Binocular':
+                    if et_model in MONOCULAR_TRACKERS:
+                        if hub_file:
+                            hub_file.close()
+                            hub_file = None
+                        print 'Wrong tracking mode selected for monocular tracker'
+                        raise ConversionError(str("EYE_SELECT_ERROR"))
+#                        file_log.write('[EYE_SELECT_ERROR]\tfile: {file_path}\n'.format(file_path=file_path ))
+#                        continue        
+                else:    
+                    #Becomes True if all nans found                
+                    check_eye['right'] = sum(np.isnan(data_wide['right_gaze_x'])) == len(data_wide['right_gaze_x'])
+                    check_eye['left'] = sum(np.isnan(data_wide['left_gaze_x'])) == len(data_wide['left_gaze_x'])
+                    
+                    if check_eye['right'] &  check_eye['left']:
+                        print "Recording does not contain any data...skipping"
+                        raise ConversionError(str("NO_DATA"))
+#                        file_log.write('[NO_DATA]\tfile: {file_path}\n'.format(file_path=file_path ))
+#                        continue
+                    elif check_eye[tracking_eye[0]]:
+                        print "Eye selection error...correcting"
+                        eye_corr = check_eye.keys()[check_eye.values().index(False)].title()
+                        data_wide['eyetracker_mode'] = eye_corr+' eye' 
+                        
+                        file_log.write('[EYE_SELECT_CORRECTION]\tfile: {file_path}\n'.format(file_path=file_path ))
+                ###
                 
-#                fig = plt.figure()
-#                ax=plt.subplot(2,1,1)
-#                plt.plot(data_wide['time'][mask], data_wide['right_angle_x'][mask], 'r-')
-#                plt.plot(data_wide['time'][mask], data_wide['target_angle_x'][mask], 'k-')
-#                plt.ylim(-20,20)
-#                plt.xlim(data_wide['time'][mask][0], data_wide['time'][mask][-1])
-#                
-#                ax=plt.subplot(2,1,2)
-#                plt.plot(data_wide['time'][mask], data_wide['right_angle_y'][mask], 'r-')
-#                plt.plot(data_wide['time'][mask], data_wide['target_angle_y'][mask], 'k-')
-#                plt.ylim(-20,20)
-#                plt.xlim(data_wide['time'][mask][0], data_wide['time'][mask][-1])  
-            ###
-                
-            #Trackloss filter
-            data_wide, _ = filter_trackloss(data_wide, et_model)
-    
+                ### Deal with multisession recordings
+                if (len(np.unique(data_wide['session_id'])) > 1):
+                    print 'Multiple sessions found'
+                    tr_loss = []
+                    session_ids = np.unique(data_wide['session_id'])
+                    
+                    ### Manual multisession handler                    
+                    mask_smc = ((special_multisession_cases['subject_id'] == sub )
+                              & (special_multisession_cases['eyetracker_model'] == et_model)
+                    )
+                    
+                    if mask_smc.any():
+                        session_ids = special_multisession_cases['session_id'][mask_smc]
+                        print 'Multisession special case'
+                        file_log.write('[MULTISESSION_SPEC]\tfile: {file_path}\tsid: {sid}\n'.format(file_path=file_path, sid=session_ids[0]))
+                    
+                    ###
+
+                    for sid in session_ids:
+                        mask = data_wide['session_id']==sid
+                        if len(np.unique(data_wide['ROW_INDEX'][mask]))==49:
+                            _, loss_count = filter_trackloss(data_wide[mask], et_model)
+                            tr_loss.append((sid, loss_count['avg'], np.sum(mask)))
+                        
+                            fig = plt.figure()
+                            tr_loss_caption = ''
+                            for eye in parseTrackerMode(data_wide['eyetracker_mode'][0]):
+                                tr_loss_caption += '{eye} eye: {tr_loss:.2f} %; '.format(eye=eye, tr_loss=100*float(loss_count[eye])/np.sum(mask))
+                                ax=plt.subplot(2,1,1)
+                                plt.plot(data_wide['time'][mask], data_wide[eye+'_angle_x'][mask])
+                                plt.plot(data_wide['time'][mask], data_wide['target_angle_x'][mask], 'k-')
+                                plt.ylim(-30,30)
+                                plt.xlim(data_wide['time'][mask][0], data_wide['time'][mask][-1])
+                                
+                                ax=plt.subplot(2,1,2)
+                                plt.plot(data_wide['time'][mask], data_wide[eye+'_angle_y'][mask])
+                                plt.plot(data_wide['time'][mask], data_wide['target_angle_y'][mask], 'k-')
+                                plt.ylim(-30,30)
+                                plt.xlim(data_wide['time'][mask][0], data_wide['time'][mask][-1])  
+                            
+                            plt.suptitle('Session: {sid}, trackloss: {loss}'.format(sid=sid, loss=tr_loss_caption))
+                            plt.savefig('{output_dir}/{et_model}/multisession_sub_{sub}_sid_{sid}.png'.format(output_dir=OUTPUT_FOLDER, 
+                                                                                                              et_model=et_model,
+                                                                                                              sub=sub,
+                                                                                                              sid=sid
+                                                                                                       )
+                            )
+                            plt.close(fig)
+                            fig = None
+                    tr_loss = np.array(tr_loss)
+                    if tr_loss.any():
+                        least_loss_ind = np.argmin(np.float32(tr_loss[:,1])/tr_loss[:,2])
+                        
+                        #Check for 100% trackloss
+                        if tr_loss[least_loss_ind][1] < tr_loss[least_loss_ind][2]:
+                        
+                            sid = tr_loss[least_loss_ind,0]
+                            
+                            mask = data_wide['session_id']==sid
+                            data_wide = data_wide[mask]
+                            
+                            file_log.write('[MULTISESSION]\tfile: {file_path}\tsid: {sid}\n'.format(file_path=file_path, sid=sid))
+                        else:
+                            print "Session does not contain any data...skipping"
+                            raise ConversionError(str("NO_DATA_SESSION"))
+#                            file_log.write('[NO_DATA_SESSION]\tfile: {file_path}\n'.format(file_path=file_path ))
+#                            continue
+                    else:
+                        print "Session does not contain any data...skipping"
+                        file_log.write('[MULTISESSION]\tfile: {file_path}\tsid: {sid}\n'.format(file_path=file_path, sid=np.nan))
+                        raise ConversionError(str("NO_DATA_STIM"))
+#                        file_log.write('[NO_DATA_STIM]\tfile: {file_path}\n'.format(file_path=file_path ))
+#                        continue
+                        
+                ### Handle VOG data END ###
+                        
             print 'Conversion duration: ', getTime()-t0
     
             #Save
             if SAVE_NPY:
-                et_dir = nabs(r"%s/%s" % (OUTPUT_FOLDER, et_model))
-                if not os.path.exists(et_dir):
-                    os.mkdir(et_dir)
-                np_file_name = r"%s/%s_%s.npy" % (
-                    et_dir, et_model, dfile[:-5])
-                
+                np_file_name = r"%s/%s_%s.npy" % (et_dir, et_model, dfile[:-5]) 
                 t0 = getTime()
                 np.save(np_file_name, data_wide)
                 print 'RAW_NPY save duration: ', getTime()-t0
             
             if SAVE_TXT:
-                et_dir = nabs(r"%s/%s" % (OUTPUT_FOLDER, et_model))
-                if not os.path.exists(et_dir):
-                    os.mkdir(et_dir)
-                txt_file_name = r"%s/%s_%s.txt" % (
-                    et_dir, et_model, dfile[:-5])
-                
+                txt_file_name = r"%s/%s_%s.txt" % (et_dir, et_model, dfile[:-5])  
                 t0 = getTime()
                 save_as_txt(txt_file_name, data_wide)
                 print 'RAW_TXT save duration: ', getTime()-t0
-            
-#            if calibrate_dpi & (et_model == 'dpi'):            
-#                fig = plt.figure()
-#                ax=plt.subplot(2,1,1)
-#                plt.plot(data_wide['time'], data_wide['right_angle_x'], 'r-')
-#                plt.plot(data_wide['time'], data_wide['target_angle_x'], 'k-')
-#                plt.ylim(-10,10)
-#                plt.xlim(data_wide['time'][0], data_wide['time'][-1])
-#                
-#                ax=plt.subplot(2,1,2)
-#                plt.plot(data_wide['time'], data_wide['right_angle_y'], 'r-')
-#                plt.plot(data_wide['time'], data_wide['target_angle_y'], 'k-')
-#                plt.ylim(-10,10)
-#                plt.xlim(data_wide['time'][0], data_wide['time'][-1])
-#                plt.savefig(np_file_name[:-3]+'png')
-#                plt.close(fig)
-            
+                    
             file_log.write('[CONVERSION_OK]\tfile: {file_path}\n'.format(file_path=file_path ))
     
-            hub_file.close()
-            file_log.close()
-            print
-        except:
+#            hub_file.close()
+#            file_log.close()
+#            print
+        
+        except ConversionError, e:
             print 'Conversion error...skipping'
+            file_log.write('[{msg}]\tfile: {file_path}\n'.format(msg=e.message, file_path=file_path ))
             file_log.write('[CONVERSION_ERROR]\tfile: {file_path}\n'.format(file_path=file_path ))
+        except:
+            print 'Unhandled conversion error...skipping'
+            file_log.write('[UNHANDLED_CONVERSION_ERROR]\tfile: {file_path}\n'.format(file_path=file_path ))
+        finally:
+            print 
             if hub_file:
                 hub_file.close()
                 hub_file = None
             if file_log:
                 file_log.close()
-            
+        
     end_time = getTime()
   
     print
@@ -843,3 +961,8 @@ if __name__ == '__main__':
     print 'Total Samples Selected for Output:', scount
     print "Total Run Time:", (end_time - start_time)
     print "Samples / Second:", scount / (end_time - start_time)
+    
+    if file_log:
+        file_log.close()
+
+sys.exit()
