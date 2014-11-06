@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 __authors__ = 'Sol', 'r-zemblys'
 
-# ## CONVERSION SCRIPT SETTINGS ###
+### CONVERSION SCRIPT SETTINGS ###
 INCLUDE_TRACKERS = (
                     'dpi',
                     'eyefollower', 
@@ -33,10 +33,9 @@ MONOCULAR_TRACKERS = (
 )
 
 INCLUDE_SUB = 'ALL'
-#INCLUDE_SUB = [9]
 
-INPUT_FILE_ROOT = r"/media/Data/EDQ/data"
-OUTPUT_FOLDER = r'/media/Data/EDQ/data_npy/'
+INPUT_FILE_ROOT = r"/media/nxr/EDQ/data.Nov.03/"
+OUTPUT_FOLDER = r'/media/nxr/EDQ/data_npy/'
 
 SAVE_NPY = True
 SAVE_TXT = False
@@ -44,12 +43,31 @@ SAVE_TXT = False
 #DPICAL is required to calibrate DPI
 BLOCKS_TO_EXPORT = ['DPICAL', 'FS']
 
-#In 2014 Apr-May EDQ recordings ROW_INDEX in DPICAL block is not set right.
-#Set FIX_DPI_CAL to True if dealing with these recordings
-FIX_DPI_CAL = True
-calibrate_dpi = True
+CALIBRATE_DPI = True
+
+#Check for binocular data averaging
+CHECK_BDA = True
+
+DATASET = 'EDQ_LUND'
+
+PLOT_TRACKERS = (
+    'dpi',
+    'eyefollower', 
+    'eyelink', 
+    'eyetribe', 
+    'hispeed1250', 
+    'hispeed240',
+    'red250', 
+    'red500', 
+    'redm', 
+    't60xl', 
+    'tx300', 
+    'x2'
+)
+plot_multisession = True
 
 GLOB_PATH_PATTERN = INPUT_FILE_ROOT + r"/*/*/*.hdf5"
+
 ##################################
 
 import os, sys
@@ -73,9 +91,12 @@ from constants import (MONOCULAR_EYE_SAMPLE, BINOCULAR_EYE_SAMPLE, MESSAGE,
                        
 from edq_shared import (getFullOutputFolderPath, nabs, 
                        save_as_txt, parseTrackerMode, VisualAngleCalc,
-                       detect_rollingWin, #for DPI calibration 
                        filter_trackloss,
 )
+
+if 'dpi' in INCLUDE_TRACKERS:
+    import cv2 #Bilateral filter from OpenCV library is used to filter DPI data
+    from edq_shared import detect_rollingWin
 
 try:
     from yaml import load, dump
@@ -88,45 +109,9 @@ if sys.version_info[0] != 2 or sys.version_info[1] >= 7:
 
     Loader.add_constructor(u'tag:yaml.org,2002:str', construct_yaml_unistr)
 
-#Bilateral filter from OpenCV lilbrary is used to filter DPI data
-if 'dpi' in INCLUDE_TRACKERS:
-    import cv2
 ####
 
-
-OUTPUT_FOLDER = getFullOutputFolderPath(OUTPUT_FOLDER)
-
-print 'OUTPUT_FOLDER:', OUTPUT_FOLDER
-
-
-def getInfoFromPath(fpath):
-    """
-
-    :param fpath:
-    :return:
-    """
-    if fpath.lower().endswith(".hdf5"):
-        fpath, fname = os.path.split(fpath)
-    return fpath.rsplit(os.path.sep, 3)[-2], np.uint(
-        re.split('_|.hdf5', fname)[-2])
-
-
-def analyseit(fpath):
-    """
-
-    :param fpath:
-    :return:
-    """
-    tracker_type, sub = getInfoFromPath(fpath)
-    if INCLUDE_SUB == 'ALL':
-        return (tracker_type in INCLUDE_TRACKERS)
-    else:
-        return (tracker_type in INCLUDE_TRACKERS) & (sub in INCLUDE_SUB)
-
-
-DATA_FILES = [nabs(fpath) for fpath in glob.glob(GLOB_PATH_PATTERN) if
-              analyseit(fpath)]
-
+### Conversion variables
 binoc_sample_fields = ['session_id', 'device_time', 'time',
                        'left_gaze_x', 'left_gaze_y', 'left_pupil_measure1',
                        'right_gaze_x', 'right_gaze_y', 'right_pupil_measure1',
@@ -153,6 +138,35 @@ cv_fields = ['SESSION_ID', 'trial_id', 'TRIAL_START', 'TRIAL_END', 'posx',
 
 TARGET_POS_X_IX = cv_fields.index('posx')
 TARGET_POS_Y_IX = cv_fields.index('posy')
+
+FIX_DPI_CAL = False
+special_multisession_cases = []
+
+###
+
+def getInfoFromPath(fpath):
+    """
+
+    :param fpath:
+    :return:
+    """
+    if fpath.lower().endswith(".hdf5"):
+        fpath, fname = os.path.split(fpath)
+    return fpath.rsplit(os.path.sep, 3)[-2], np.uint(
+        re.split('_|.hdf5', fname)[-2])
+
+
+def analyseit(fpath):
+    """
+
+    :param fpath:
+    :return:
+    """
+    tracker_type, sub = getInfoFromPath(fpath)
+    if INCLUDE_SUB == 'ALL':
+        return (tracker_type in INCLUDE_TRACKERS)
+    else:
+        return (tracker_type in INCLUDE_TRACKERS) & (sub in INCLUDE_SUB)
 
 
 def openHubFile(filepath, filename, mode):
@@ -245,10 +259,11 @@ def convertEDQ(hub_file, screen_measures, et_model):
 
     sample_data_by_session = []
     session_info_dict = getSessionDataFromMsgEvents(hub_file)
+    
+    if CALIBRATE_DPI & FIX_DPI_CAL & (et_model == 'dpi'):
+        print 'Warning! ROW_INDEX fix for DPI calibration is ENABLED'
 
     for session_id, session_info in session_info_dict.items():
-        if calibrate_dpi & FIX_DPI_CAL & (et_model == 'dpi'):
-                print 'Warning! ROW_INDEX fix for DPI calibration is ENABLED'
         # Get the condition variable set rows for the 'FS' and/or 'DPICAL' trial type
         for block in BLOCKS_TO_EXPORT:
             ecvTable = hub_file.root.data_collection.condition_variables\
@@ -545,47 +560,110 @@ class ConversionError(RuntimeError):
       self.args = arg
       self.message = arg
       
+def nan_equal(a,b):
+    try:
+        np.testing.assert_equal(a,b)
+    except AssertionError:
+        return False
+    return True
+
+def plot_data(data, title, fname, ylim, keep=False):
+    
+    fig = plt.figure()
+    plt.suptitle(title)
+    
+    for eye in parseTrackerMode(data['eyetracker_mode'][0]):
+        plt.subplot(2,1,1)
+        plt.plot(data['time'], data[eye+'_angle_x'])
+        plt.plot(data['time'], data['target_angle_x'], 'k-')
+        plt.ylim(ylim[0], ylim[1])
+        plt.xlim(data['time'][0], data['time'][-1])
+        plt.ylabel('Horizontal position, deg')
+        
+        plt.subplot(2,1,2)
+        plt.plot(data['time'], data[eye+'_angle_y'])
+        plt.plot(data['time'], data['target_angle_y'], 'k-')
+        plt.ylim(ylim[0], ylim[1])
+        plt.xlim(data['time'][0], data['time'][-1]) 
+        plt.xlabel('Time, s')
+        plt.ylabel('Vertical position, deg')
+    
+    plt.savefig(fname)
+    
+    if not(keep):
+        fig.clf()
+        plt.close(fig)
+        fig = None
+    
+#Custom conversion settings
+if DATASET == 'EDQ_LUND':
+    '''    
+    In 2014 Apr-May EDQ recordings ROW_INDEX in DPICAL block is not set right.
+    Set FIX_DPI_CAL to True if dealing with these recordings
+    '''
+    FIX_DPI_CAL = True
+    
+    '''
+    Manual multisession handler. 
+    Some recordings contain data from several participants 
+    due to mistake when setting subject id. 
+    *special_multisession_cases* array can be used to manualy couple session id
+    with subject id.
+    Format:
+        ('subject_id', np.uint8)
+        ('eyetracker_model', str, 32)
+        ('session_id', np.uint8)
+
+    '''  
+    special_multisession_cases.append((121, 'eyelink', 1))
+    special_multisession_cases.append((124, 'eyelink', 2))
+    special_multisession_cases.append((91, 'red250', 1))
+    special_multisession_cases.append((95, 'red250', 2))
+    special_multisession_cases.append((84, 'red500', 1))
+    special_multisession_cases.append((87, 'red500', 2))
+
+special_multisession_cases=np.array(special_multisession_cases, dtype=smc_dtype)
+
+#DPI calibration config
+if 'dpi' in INCLUDE_TRACKERS: 
+    cal_point_sets = dict([
+        (5, np.array([0,4,12,20,24])), 
+        (9, np.array([0,2,4,10,12,14,20,22,24])), 
+        (14, np.array([1,2,35,7,9,11,12,13,15,17,19,21,22,23])),
+        (16, np.array([0,6,18,24,4,8,16,20,2,7,17,22,10,11,13,14])),
+        (17, np.array([0,6,12,18,24,4,8,16,20,2,7,17,22,10,11,13,14])),
+        (25, np.arange(25))
+    ])
+    
+    win_select_funcs = dict([
+        ('roll', detect_rollingWin)
+    ])
+    
+    calibration_settings_set = [{
+        'poly_type': 'villanueva',
+        'cal_point_set': 16,
+        'min_cal_points': 8,
+        'win_select_func': 'roll',
+        'win_size': 0.175,  
+        'win_type': 'sample',     
+        'window_skip': 0.2,
+        'wsa': 'fiona' ,
+        'units': 'gaze',
+    }]
+
+OUTPUT_FOLDER = getFullOutputFolderPath(OUTPUT_FOLDER)
+print 'OUTPUT_FOLDER:', OUTPUT_FOLDER
+
+DATA_FILES = [nabs(fpath) for fpath in glob.glob(GLOB_PATH_PATTERN) if
+              analyseit(fpath)]
+ 
+      
 ############### MAIN RUNTIME SCRIPT ########################
 #
 # Below is the actual script that is run when this file is run through
 # the python interpreter. The code above defines functions used by the below
 # runtime script.
 #
-
-#DPI calibration config
-cal_points_sets = dict([
-    (5, np.array([0,4,12,20,24])), 
-    (9, np.array([0,2,4,10,12,14,20,22,24])), 
-    (14, np.array([1,2,35,7,9,11,12,13,15,17,19,21,22,23])),
-    (16, np.array([0,6,18,24,4,8,16,20,2,7,17,22,10,11,13,14])),
-    (17, np.array([0,6,12,18,24,4,8,16,20,2,7,17,22,10,11,13,14])),
-    (25, np.arange(25))
-])
-
-win_select_funcs = dict([
-    ('roll', detect_rollingWin)
-])
-
-calibration_settings_set = [{
-    'poly_type': 'villanueva',
-    'cal_point_set': 16,
-    'min_cal_points': 8,
-    'win_select_func': 'roll'
-}]
-
-win_size=0.175            
-window_skip = 0.2
-wsa='fiona'  
-
-### Manual multisession handler
-special_multisession_cases = []
-special_multisession_cases.append((121, 'eyelink', 1))
-special_multisession_cases.append((124, 'eyelink', 2))
-special_multisession_cases.append((91, 'red250', 1))
-special_multisession_cases.append((95, 'red250', 2))
-special_multisession_cases.append((84, 'red500', 1))
-special_multisession_cases.append((87, 'red500', 2))
-special_multisession_cases=np.array(special_multisession_cases, dtype=smc_dtype)
 
 if __name__ == '__main__':
     et_model_display_configs = dict()
@@ -640,11 +718,8 @@ if __name__ == '__main__':
             if wide_format_samples_by_session == None or len(wide_format_samples_by_session) == 0:
                 print "\n>>>>>>\nERROR processing Hdf5 file: %s\n\tFile has " \
                       "no 'FS' BLOCK COND VARS.\n\tSKIPPING FILE.\n<<<<<<\n" % (file_path)
-#                file_log.write('[NO_BLOCK_DATA]\tfile: {file_path}\n'.format(file_path=file_path ))
                 raise ConversionError(str("NO_BLOCK_DATA"))
-#                continue
     
-            file_proc_count += 1
             wide_format_samples = []
             for output_samples in wide_format_samples_by_session:
                 wide_format_samples.extend(output_samples)
@@ -658,7 +733,7 @@ if __name__ == '__main__':
                 ### Handle DPI data START ###
                 data_wide, _ = filter_trackloss(filter_bilateral(data_wide), et_model)
             
-                if calibrate_dpi:
+                if CALIBRATE_DPI:
                     t1 = getTime()
                     print "DPI calibration"
         
@@ -666,44 +741,39 @@ if __name__ == '__main__':
                         data_wide, _, exp_session_id = handle_dpi_multisession(data_wide)
                     else:
                         exp_session_id = data_wide['session_id'][0]
-                                        
-                    #Conversion to degrees
-                    session_info_dict = getSessionDataFromMsgEvents(hub_file)
-                    session_info = session_info_dict[exp_session_id]
-                    display_size_pix = session_info['display_width_pix'], session_info['display_height_pix']    
-                    display_size_mm = screen_measurments['screen_width'], screen_measurments['screen_height']                
-                    pix2deg = VisualAngleCalc(display_size_mm, display_size_pix,
-                                              screen_measurments['eye_distance']).pix2deg
-        
+                        
+                    #Calibration settings
                     poly_type = calibration_settings_set[0]['poly_type']
                     cal_point_set = calibration_settings_set[0]['cal_point_set']
                     min_cal_points = calibration_settings_set[0]['min_cal_points']
                     win_select_func = calibration_settings_set[0]['win_select_func']
+                    units = calibration_settings_set[0]['units']
+
+                    args={
+                          'win_size': calibration_settings_set[0]['win_size'],
+                          'win_type': calibration_settings_set[0]['win_type'],
+                          'window_skip': calibration_settings_set[0]['window_skip'],
+                          'wsa': [calibration_settings_set[0]['wsa']]}
                     
-                    cal_points = cal_points_sets[cal_point_set]
+                    cal_points = cal_point_sets[cal_point_set]
                     cal_block = data_wide['BLOCK'] == 'DPICAL'
                     exp_block = data_wide['BLOCK'] == 'FS' #TODO: deal with other blocks
                     DATA_CAL = data_wide[cal_block]
-        
-                    args={
-                          'win_size': win_size,
-                          'win_type': 'sample',
-                          'window_skip': window_skip,
-                          'wsa': ['fiona']}
-                    units = 'gaze'
                     
-                    ### CALIBRATION START ###
+                    if np.sum(cal_block) == 0:
+                        print 'DPI calibration block missing'
+                        raise ConversionError(str("DPI_CAL_NO_DATA"))
+                    if np.sum(exp_block) == 0:
+                        print 'DPI experiment block missing'
+                        raise ConversionError(str("DPI_EXP_NO_DATA"))
+                   
+                   ### CALIBRATION START ###
                     data_wide_raw = np.copy(data_wide)
   
                     stim_CAL = win_select_funcs[win_select_func](DATA_CAL, **args)
-                    if len(stim_CAL)!=25:
-                        if hub_file:
-                            hub_file.close()
-                            hub_file = None
+                    if len(stim_CAL)>25:
                         print 'Multiple calibrations per session...skipping'
-                        raise ConversionError(str("DPI_CAL_SKIPPED"))
-#                        file_log.write('[DPI_CAL_SKIPPED]\tfile: {file_path}\tMultiple calibrations per session\n'.format(file_path=file_path ))
-#                        continue
+                        raise ConversionError(str("DPI_MULTIPLE_CAL_PER_SESS"))
                         
                     cal_ind=stim_CAL['ROW_INDEX'] == cal_points[:, None]
                     cal_ind=np.array(np.sum(cal_ind, axis=0), dtype=bool)
@@ -718,29 +788,35 @@ if __name__ == '__main__':
                         valid_cal_ind = np.bitwise_and(np.isfinite(stim_CAL[stim_key_x]), 
                                                        np.isfinite(stim_CAL[stim_key_y])
                                         )
+                        
                         cal_ind = np.bitwise_and(cal_ind, valid_cal_ind)
                         
                         extra_cal_ind = np.bitwise_xor(valid_cal_ind, cal_ind)
-                        rand_p_count = cal_point_set-np.sum(cal_ind)
-                        rand_cal_ind = np.random.choice(np.arange(len(extra_cal_ind))[extra_cal_ind], rand_p_count)
+                        rand_p_count = cal_point_set-np.sum(cal_ind) #how many points are missing
+                        if rand_p_count > np.sum(extra_cal_ind): #if needed points exceed available points
+                            rand_p_count = np.sum(extra_cal_ind) #select only available amount of extra points
+                        rand_cal_ind = np.random.choice(np.arange(len(extra_cal_ind))[extra_cal_ind], rand_p_count, replace=False)
                         extra_cal_ind[:]=False
                         extra_cal_ind[rand_cal_ind] = True
                         
                         cal_ind = np.bitwise_or(cal_ind, extra_cal_ind)
                         
                         if (np.sum(cal_ind)<min_cal_points):
-                            if hub_file:
-                                hub_file.close()
-                                hub_file = None
                             print 'Only %d points available..Skipping'%np.sum(cal_ind)
-                            raise ConversionError(str("DPI_CAL_SKIPPED"))
-#                            file_log.write('[DPI_CAL_SKIPPED]\tfile: {file_path}\tAvailable calibration points: {cal_p_available}\n'.format(cal_p_available=np.sum(cal_ind), file_path=file_path ))
-#                            continue
+                            file_log.write('[DPI_CAL_NO_POINTS]\tfile: {file_path}\tAvailable calibration points: {cal_p_available}\n'.format(cal_p_available=np.sum(cal_ind), file_path=file_path ))
+                            raise ConversionError(str("DPI_CAL_NO_POINTS"))
                         else:
-                            file_log.write('[DPI_CAL_REPLACED]\tfile: {file_path}\Replaced calibration points: {rand_p_count}\n'.format(rand_p_count=rand_p_count, file_path=file_path ))
+                            file_log.write('[DPI_CAL_POINTS_REPLACED]\tfile: {file_path}\tReplaced calibration points: {rand_p_count}\n'.format(rand_p_count=rand_p_count, file_path=file_path ))
                         
                     ####
-                    
+                    #Conversion to degrees
+                    session_info_dict = getSessionDataFromMsgEvents(hub_file)
+                    session_info = session_info_dict[exp_session_id]
+                    display_size_pix = session_info['display_width_pix'], session_info['display_height_pix']    
+                    display_size_mm = screen_measurments['screen_width'], screen_measurments['screen_height']                
+                    pix2deg = VisualAngleCalc(display_size_mm, display_size_pix,
+                                              screen_measurments['eye_distance']).pix2deg
+                                              
                     for eye in tracking_eye:               
         
                         Px, Py = build_polynomial(stim_CAL['_'.join((eye, units, 'fix_x'))][cal_ind], 
@@ -766,36 +842,8 @@ if __name__ == '__main__':
                     data_wide = data_wide[exp_block]
                     
                     file_log.write('[DPI_CAL_OK]\tfile: {file_path}\tCalibrated using {cal_p} points\n'.format(cal_p=np.sum(cal_ind), file_path=file_path ))
-                    
+                    print np.sum(cal_ind)
                     print 'DPI calibration duration: ', getTime()-t1  
-                    
-                    #DPI plot
-                    _, loss_count = filter_trackloss(data_wide, et_model)
-                    loss_count = loss_count['avg']
-                    fig = plt.figure()
-                    plt.suptitle('Operator: {operator}, trackloss: {loss:.2f} %'.format(operator=data_wide['operator'][0], 
-                                                                                    loss=100*float(loss_count)/np.sum(exp_block)
-                                                                             )
-                    )
-                    ax=plt.subplot(2,1,1)
-                    plt.plot(data_wide['time'], data_wide['right_angle_x'], 'r-')
-                    plt.plot(data_wide['time'], data_wide['target_angle_x'], 'k-')
-                    plt.ylim(-10,10)
-                    plt.xlim(data_wide['time'][0], data_wide['time'][-1])
-                    
-                    ax=plt.subplot(2,1,2)
-                    plt.plot(data_wide['time'], data_wide['right_angle_y'], 'r-')
-                    plt.plot(data_wide['time'], data_wide['target_angle_y'], 'k-')
-                    plt.ylim(-10,10)
-                    plt.xlim(data_wide['time'][0], data_wide['time'][-1])
-                    plt.savefig('{output_dir}/{et_model}/sub_{sub}.png'.format(output_dir=OUTPUT_FOLDER, 
-                                                                                                      et_model=et_model,
-                                                                                                      sub=sub,
-                                                                                                )
-                    )
-                    fig.clf()
-                    plt.close(fig)
-                    fig = None
 
                 ### Handle DPI data END ###
                 
@@ -803,43 +851,42 @@ if __name__ == '__main__':
                 ### Handle VOG data START ###
                 data_wide, _ = filter_trackloss(data_wide, et_model)
                 
-                #All targets check
-                if len(np.unique(data_wide['ROW_INDEX']))!=49:
-                    if hub_file:
-                        hub_file.close()
-                        hub_file = None
-                    print "Not enough data recorded...skipping"      
-                    raise ConversionError(str("NO_DATA_STIM"))
-#                    file_log.write('[NO_DATA_STIM]\tfile: {file_path}\n'.format(file_path=file_path ))
-#                    continue    
+                #All targets check                        
+                if len(np.unique(data_wide['ROW_INDEX']))<25: #continue, if at least half of the targets recorded
+                    print "Not enough data recorded...skipping"
+                    raise ConversionError(str("VOG_NO_ENOUGH_STIM"))  
+                if len(np.unique(data_wide['ROW_INDEX']))!=49: 
+                    print "Not all targets recorded"
+                    file_log.write('[VOG_NO_ALL_STIM]\tfile: {file_path}\n'.format(file_path=file_path ))
                 
-                ### Eye selection check 
+                ### Empty recording check 
                 check_eye = dict()
+                #Becomes True if all nans found                
+                check_eye['right'] = np.sum(np.isnan(data_wide['right_gaze_x'])) == len(data_wide['right_gaze_x'])
+                check_eye['left'] = np.sum(np.isnan(data_wide['left_gaze_x'])) == len(data_wide['left_gaze_x'])
+                if check_eye['right'] &  check_eye['left']:
+                    print "Recording does not contain any data...skipping"
+                    raise ConversionError(str("VOG_NO_DATA"))                
+                
+                ### Data integrity checks
                 if data_wide['eyetracker_mode'][0] == 'Binocular':
+                    # Tracking mode check 
                     if et_model in MONOCULAR_TRACKERS:
-                        if hub_file:
-                            hub_file.close()
-                            hub_file = None
                         print 'Wrong tracking mode selected for monocular tracker'
-                        raise ConversionError(str("EYE_SELECT_ERROR"))
-#                        file_log.write('[EYE_SELECT_ERROR]\tfile: {file_path}\n'.format(file_path=file_path ))
-#                        continue        
-                else:    
-                    #Becomes True if all nans found                
-                    check_eye['right'] = sum(np.isnan(data_wide['right_gaze_x'])) == len(data_wide['right_gaze_x'])
-                    check_eye['left'] = sum(np.isnan(data_wide['left_gaze_x'])) == len(data_wide['left_gaze_x'])
+                        raise ConversionError(str("VOG_MODE_SELECT_ERROR")) 
                     
-                    if check_eye['right'] &  check_eye['left']:
-                        print "Recording does not contain any data...skipping"
-                        raise ConversionError(str("NO_DATA"))
-#                        file_log.write('[NO_DATA]\tfile: {file_path}\n'.format(file_path=file_path ))
-#                        continue
-                    elif check_eye[tracking_eye[0]]:
-                        print "Eye selection error...correcting"
-                        eye_corr = check_eye.keys()[check_eye.values().index(False)].title()
-                        data_wide['eyetracker_mode'] = eye_corr+' eye' 
+                    # Binocular averaging check
+                    if CHECK_BDA & nan_equal(data_wide['left_gaze_x'], data_wide['right_gaze_x']):
+                        print 'Binocular data averaged..skipping' 
+                        raise ConversionError(str("VOG_BDA")) 
+                
+                #Monocular eye select fix    
+                elif check_eye[tracking_eye[0]]:
+                    print "Eye selection error...correcting"
+                    eye_corr = check_eye.keys()[check_eye.values().index(False)].title()
+                    data_wide['eyetracker_mode'] = eye_corr+' eye' 
                         
-                        file_log.write('[EYE_SELECT_CORRECTION]\tfile: {file_path}\n'.format(file_path=file_path ))
+                    file_log.write('[VOG_EYE_SELECT_CORRECTION]\tfile: {file_path}\n'.format(file_path=file_path ))
                 ###
                 
                 ### Deal with multisession recordings
@@ -856,7 +903,7 @@ if __name__ == '__main__':
                     if mask_smc.any():
                         session_ids = special_multisession_cases['session_id'][mask_smc]
                         print 'Multisession special case'
-                        file_log.write('[MULTISESSION_SPEC]\tfile: {file_path}\tsid: {sid}\n'.format(file_path=file_path, sid=session_ids[0]))
+                        file_log.write('[VOG_MULTISESSION_SPEC]\tfile: {file_path}\tsid: {sid}\n'.format(file_path=file_path, sid=session_ids[0]))
                     
                     ###
 
@@ -865,62 +912,49 @@ if __name__ == '__main__':
                         if len(np.unique(data_wide['ROW_INDEX'][mask]))==49:
                             _, loss_count = filter_trackloss(data_wide[mask], et_model)
                             tr_loss.append((sid, loss_count['avg'], np.sum(mask)))
-                        
-                            fig = plt.figure()
-                            tr_loss_caption = ''
-                            for eye in parseTrackerMode(data_wide['eyetracker_mode'][0]):
-                                tr_loss_caption += '{eye} eye: {tr_loss:.2f} %; '.format(eye=eye, tr_loss=100*float(loss_count[eye])/np.sum(mask))
-                                ax=plt.subplot(2,1,1)
-                                plt.plot(data_wide['time'][mask], data_wide[eye+'_angle_x'][mask])
-                                plt.plot(data_wide['time'][mask], data_wide['target_angle_x'][mask], 'k-')
-                                plt.ylim(-30,30)
-                                plt.xlim(data_wide['time'][mask][0], data_wide['time'][mask][-1])
-                                
-                                ax=plt.subplot(2,1,2)
-                                plt.plot(data_wide['time'][mask], data_wide[eye+'_angle_y'][mask])
-                                plt.plot(data_wide['time'][mask], data_wide['target_angle_y'][mask], 'k-')
-                                plt.ylim(-30,30)
-                                plt.xlim(data_wide['time'][mask][0], data_wide['time'][mask][-1])  
                             
-                            plt.suptitle('Session: {sid}, trackloss: {loss}'.format(sid=sid, loss=tr_loss_caption))
-                            plt.savefig('{output_dir}/{et_model}/multisession_sub_{sub}_sid_{sid}.png'.format(output_dir=OUTPUT_FOLDER, 
-                                                                                                              et_model=et_model,
-                                                                                                              sub=sub,
-                                                                                                              sid=sid
-                                                                                                       )
-                            )
-                            plt.close(fig)
-                            fig = None
+                            ### PLot multisession data
+                            if plot_multisession:
+                                tr_loss_caption = ''
+                                for eye in parseTrackerMode(data_wide['eyetracker_mode'][0]):
+                                    tr_loss_caption += '{eye} eye: {tr_loss:.2f} %; '.format(eye=eye, tr_loss=100*float(loss_count[eye])/np.sum(mask))
+                                
+                                _title = 'Tracker: {et_model}, Operator: {operator}, trackloss: {loss}'.format(et_model=et_model,
+                                                                                                               operator=data_wide['operator'][0], 
+                                                                                                               loss = tr_loss_caption
+                                                                                                        )
+                                _fname = '{output_dir}/{et_model}/multisession_{et_model}_sub_{sub}_sid_{sid}.png'.format(output_dir=OUTPUT_FOLDER, 
+                                                                                                                          et_model=et_model,
+                                                                                                                          sub=sub,
+                                                                                                                          sid=sid
+                                                                                                                   )
+                                plot_data(data_wide[mask], _title, _fname, ylim=[-30, 30]) 
+                            ###
+                                
                     tr_loss = np.array(tr_loss)
                     if tr_loss.any():
                         least_loss_ind = np.argmin(np.float32(tr_loss[:,1])/tr_loss[:,2])
                         
                         #Check for 100% trackloss
                         if tr_loss[least_loss_ind][1] < tr_loss[least_loss_ind][2]:
-                        
                             sid = tr_loss[least_loss_ind,0]
-                            
                             mask = data_wide['session_id']==sid
                             data_wide = data_wide[mask]
                             
-                            file_log.write('[MULTISESSION]\tfile: {file_path}\tsid: {sid}\n'.format(file_path=file_path, sid=sid))
+                            file_log.write('[VOG_MULTISESSION]\tfile: {file_path}\tsid: {sid}\n'.format(file_path=file_path, sid=sid))
                         else:
                             print "Session does not contain any data...skipping"
-                            raise ConversionError(str("NO_DATA_SESSION"))
-#                            file_log.write('[NO_DATA_SESSION]\tfile: {file_path}\n'.format(file_path=file_path ))
-#                            continue
+                            raise ConversionError(str("VOG_NO_DATA_SESSION"))
                     else:
                         print "Session does not contain any data...skipping"
-                        file_log.write('[MULTISESSION]\tfile: {file_path}\tsid: {sid}\n'.format(file_path=file_path, sid=np.nan))
-                        raise ConversionError(str("NO_DATA_STIM"))
-#                        file_log.write('[NO_DATA_STIM]\tfile: {file_path}\n'.format(file_path=file_path ))
-#                        continue
+                        file_log.write('[VOG_MULTISESSION]\tfile: {file_path}\tsid: {sid}\n'.format(file_path=file_path, sid=np.nan))
+                        raise ConversionError(str("VOG_NO_DATA_STIM"))
                         
                 ### Handle VOG data END ###
                         
             print 'Conversion duration: ', getTime()-t0
     
-            #Save
+            ### Save data
             if SAVE_NPY:
                 np_file_name = r"%s/%s_%s.npy" % (et_dir, et_model, dfile[:-5]) 
                 t0 = getTime()
@@ -932,12 +966,30 @@ if __name__ == '__main__':
                 t0 = getTime()
                 save_as_txt(txt_file_name, data_wide)
                 print 'RAW_TXT save duration: ', getTime()-t0
-                    
+            ###
+                
             file_log.write('[CONVERSION_OK]\tfile: {file_path}\n'.format(file_path=file_path ))
-    
-#            hub_file.close()
-#            file_log.close()
-#            print
+            
+            ### Plot data
+            if et_model in PLOT_TRACKERS:
+                _, loss_count = filter_trackloss(data_wide, et_model)
+                tr_loss_caption = ''
+                for eye in parseTrackerMode(data_wide['eyetracker_mode'][0]):
+                    tr_loss_caption += '{eye} eye: {tr_loss:.2f} %; '.format(eye=eye, tr_loss=100*float(loss_count[eye])/len(data_wide))
+                                
+                _title = 'Tracker: {et_model}, Operator: {operator}, trackloss: {loss}'.format(et_model=et_model,
+                                                                                               operator=data_wide['operator'][0], 
+                                                                                               loss = tr_loss_caption
+                                                                                        )                
+                _fname = '{output_dir}/{et_model}/{et_model}_sub_{sub}.png'.format(output_dir=OUTPUT_FOLDER,
+                                                                                   et_model=et_model,
+                                                                                   sub=sub
+                                                                            )
+                if et_model == 'dpi':
+                    plot_data(data_wide, _title, _fname, ylim=[-10, 10])
+                else:
+                    plot_data(data_wide, _title, _fname, ylim=[-30, 30])
+            ###
         
         except ConversionError, e:
             print 'Conversion error...skipping'
@@ -947,6 +999,7 @@ if __name__ == '__main__':
             print 'Unhandled conversion error...skipping'
             file_log.write('[UNHANDLED_CONVERSION_ERROR]\tfile: {file_path}\n'.format(file_path=file_path ))
         finally:
+            file_proc_count += 1
             print 
             if hub_file:
                 hub_file.close()
