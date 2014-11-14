@@ -3,6 +3,8 @@ import os
 
 import numpy as np
 import numpy.ma as ma
+import matplotlib.pylab as plt
+plt.ion()
 
 from constants import *
 
@@ -152,46 +154,44 @@ class VisualAngleCalc(object):
 ###
         
         
-def initStim(data):
+def initStim(data, n):
     """
     Creates /one-row-per-target/ data matrix 
     
     @author: Raimondas Zemblys
     @email: raimondas.zemblys@humlab.lu.se
     """
+    #Independent variables
+    INCLUDE_IVs = ['eyetracker_model',
+                   'eyetracker_sampling_rate',
+                   'eyetracker_mode',
+                   'operator',
+                   'subject_id',
+                   'exp_date',
+                   'trial_id',
+                   'ROW_INDEX',
+                   'dt',
+                   'TRIAL_START',
+                   'TRIAL_END',
+                   'posx',
+                   'posy',
+                   'target_angle_x',
+                   'target_angle_y',
+                   ]  
+        
     stim_change_ind = np.where(np.hstack((1,np.diff(data['trial_id']))) == 1)
-    stim_change_count = len(stim_change_ind[0])
+    stim_change_count = len(stim_change_ind[0])    
     
-    wsa_list=np.empty_like(data['eyetracker_model'][stim_change_ind])
-    wsa_list[:]='nan'
+    stim = np.array( np.ones(stim_change_count)*np.nan, dtype=stim_dtype)
     
-    stim = np.array(
-               zip(
-                   data['eyetracker_model'][stim_change_ind],
-                   data['eyetracker_sampling_rate'][stim_change_ind],                 
-                   data['eyetracker_mode'][stim_change_ind],
-                   np.ones(stim_change_count) * getGeometry(data[0]), 
-                   data['operator'][stim_change_ind],
-
-                   data['subject_id'][stim_change_ind],
-                   data['trial_id'][stim_change_ind], 
-                   data['ROW_INDEX'][stim_change_ind], 
-                   data['dt'][stim_change_ind], 
-                   data['TRIAL_START'][stim_change_ind],
-                   data['TRIAL_END'][stim_change_ind],
-                   data['posx'][stim_change_ind],
-                   data['posy'][stim_change_ind],
-                   data['target_angle_x'][stim_change_ind],
-                   data['target_angle_y'][stim_change_ind],
-                   
-                   wsa_list.tolist(),
-                   *np.zeros((109, stim_change_count)) * np.nan
-               ), dtype=stim_dtype
-           )
+    for stim_key_IV in INCLUDE_IVs:
+        stim[stim_key_IV][:] = data[stim_key_IV][stim_change_ind]
+    
+    stim['px2deg'] = getGeometry(data[0])
     
     #Remove first and last stimuli
-    return stim[1:-1]
-    
+    ind = (stim['trial_id']==0) | (stim['trial_id']==n+1)
+    return stim[~ind]
     
 def detect_rollingWin(data, **args):
     """
@@ -204,7 +204,8 @@ def detect_rollingWin(data, **args):
     win_type = args['win_type']
     win_size_sample = np.int16(win_size*data['eyetracker_sampling_rate'][0])+1
     window_skip = args['window_skip']
-    selection_algorithms = args['wsa']    
+    selection_algorithms = args['wsa']  
+    target_count = args['target_count']
     
     measures=dict()
     stim_full=[]
@@ -217,7 +218,7 @@ def detect_rollingWin(data, **args):
             measures.update(rolling_measures_time(data, eye, 'angle', win_size)) 
         
     for wsa in selection_algorithms:
-        stim = initStim(data)
+        stim = initStim(data, target_count)
         stim['wsa'][:] = wsa
         stim['win_size'][:] =  win_size
         stim['window_skip'][:] =  window_skip
@@ -258,6 +259,10 @@ def detect_rollingWin(data, **args):
                         measures_range = measures_rangeACC
 
                     if np.sum(np.isfinite(measures_range)) > 0: #handle all-nan slice
+                        if np.size(measures_range) == 1:#handle one sample slice
+                            measures_range = np.array([measures_range])
+                            analysis_range = np.array([analysis_range])
+                            
                         IND = analysis_range[np.nanargmin(measures_range)]
 
                         #save measures to stim
@@ -282,6 +287,7 @@ def rolling_measures_sample(data, eye, units, win_size_sample):
     """  
     measures=dict()
     
+    #Data
     rolling_data_x = rolling_window(data['_'.join((eye, units, 'x'))], win_size_sample)
     rolling_data_y = rolling_window(data['_'.join((eye, units, 'y'))], win_size_sample)
     
@@ -292,6 +298,7 @@ def rolling_measures_sample(data, eye, units, win_size_sample):
     rolling_err_x = rolling_window(err_x, win_size_sample)
     rolling_err_y = rolling_window(err_y, win_size_sample)
     
+    #Time
     rolling_time = rolling_window(data['time'], win_size_sample)
     measures['_'.join((eye, units, 'sample_count'))] = np.ones(len(rolling_time)) * win_size_sample
     measures['_'.join((eye, units, 'actual_win_size'))] = rolling_time[:,-1]-rolling_time[:,0]
@@ -318,7 +325,7 @@ def rolling_measures_sample(data, eye, units, win_size_sample):
     measures['_'.join((eye, units, 'STD', 'x'))] = np.std(rolling_data_x, axis=1)
     measures['_'.join((eye, units, 'STD', 'y'))] = np.std(rolling_data_y, axis=1)
     measures['_'.join((eye, units, 'STD'))] = np.hypot(measures['_'.join((eye, units, 'STD', 'x'))],
-                                                          measures['_'.join((eye, units, 'STD', 'y'))]   
+                                                       measures['_'.join((eye, units, 'STD', 'y'))]   
                                                  )
     #STD of PE                                             
     measures['_'.join((eye, units, 'STD_PE', 'x'))] = np.std(rolling_err_x, axis=1)
@@ -345,11 +352,6 @@ def rolling_measures_sample(data, eye, units, win_size_sample):
     measures['_'.join((eye, units, 'fix', 'y'))] = np.median(rolling_data_y, axis=1)
     ###
     
-    ###Other measures
-    measures['_'.join((eye, units, 'range', 'x'))] = np.max(rolling_data_x, axis=1)-np.min(rolling_data_x, axis=1)
-    measures['_'.join((eye, units, 'range', 'y'))] = np.max(rolling_data_y, axis=1)-np.min(rolling_data_y, axis=1)
-    ###
-    
     return measures
 
 def rolling_measures_time(data, eye, units, win_size):
@@ -372,7 +374,27 @@ def rolling_measures_time(data, eye, units, win_size):
     rolling_temp_acc_for_isd=np.cumsum(rolling_window(temp_acc,win_size_sample*2-1), axis=1)
     mask_data=ma.getmaskarray(ma.masked_greater(rolling_temp_acc_for_data, win_size))
     mask_isd=ma.getmaskarray(ma.masked_greater(rolling_temp_acc_for_isd, win_size))
-  
+
+    #Data
+    rolling_data_x = ma.array(rolling_window(data['_'.join((eye, units, 'x'))], win_size_sample*2),mask=mask_data) 
+    rolling_data_y = ma.array(rolling_window(data['_'.join((eye, units, 'y'))], win_size_sample*2),mask=mask_data) 
+
+    #Position error
+    err_x = data['_'.join((eye, units, 'x'))] - data[stim_pos_mappings[units]+'x']
+    err_y = data['_'.join((eye, units, 'y'))] - data[stim_pos_mappings[units]+'y']
+    
+    rolling_err_x = ma.array(rolling_window(err_x, win_size_sample*2),mask=mask_data) 
+    rolling_err_y = ma.array(rolling_window(err_y, win_size_sample*2),mask=mask_data)
+    
+    #Time
+    rolling_time = ma.array(rolling_window(data['time'], win_size_sample*2),mask=mask_data)
+    
+    measures['_'.join((eye, units, 'sample_count'))] = np.sum(mask_data, axis=1)
+    notmasked_edges=ma.notmasked_edges(rolling_time, axis=1)
+    start_times = ma.getdata(rolling_time[notmasked_edges[0][0],notmasked_edges[0][1]])
+    end_times = ma.getdata(rolling_time[notmasked_edges[1][0],notmasked_edges[1][1]])
+    measures['_'.join((eye, units, 'actual_win_size'))] = end_times-start_times
+    
     ### RMS
     isd = np.diff([data['_'.join((eye, units, 'x'))], 
                    data['_'.join((eye, units, 'y'))]], axis=1).T
@@ -394,16 +416,87 @@ def rolling_measures_time(data, eye, units, win_size):
     measures['_'.join((eye, units, 'RMS'))] = np.hypot(RMS[0], RMS[1])
     ###
     
-    rolling_data_x = ma.array(rolling_window(data['_'.join((eye, units, 'x'))], win_size_sample*2),mask=mask_data) 
-    rolling_data_y = ma.array(rolling_window(data['_'.join((eye, units, 'y'))], win_size_sample*2),mask=mask_data) 
-    rolling_time = ma.array(rolling_window(data['time'], win_size_sample*2),mask=mask_data)
+    #RMS of PE
+    isd = np.diff([err_x, err_y], axis=1).T
     
-    measures['_'.join((eye, units, 'sample_count'))] = np.sum(mask_data, axis=1)
+    rolling_isd_x = ma.array(rolling_window(isd[:,0], win_size_sample*2-1),mask=mask_isd) 
+    rolling_isd_y = ma.array(rolling_window(isd[:,1], win_size_sample*2-1),mask=mask_isd)
+
+    RMS=[]
+    for rms in [np.sqrt(np.mean(np.square(rolling_isd_x), 1)),
+                np.sqrt(np.mean(np.square(rolling_isd_y), 1)),
+                ]:
+        rms_tmp = ma.getdata(rms)
+        mask = ma.getmask(rms)
+        rms_tmp[mask]=np.nan
+        RMS.append(rms_tmp)
     
-    notmasked_edges=ma.notmasked_edges(rolling_time, axis=1)
-    start_times = ma.getdata(rolling_time[notmasked_edges[0][0],notmasked_edges[0][1]])
-    end_times = ma.getdata(rolling_time[notmasked_edges[1][0],notmasked_edges[1][1]])
-    measures['_'.join((eye, units, 'actual_win_size'))] = end_times-start_times
+    measures['_'.join((eye, units, 'RMS_PE', 'x'))] = RMS[0]
+    measures['_'.join((eye, units, 'RMS_PE', 'y'))] = RMS[1]    
+    measures['_'.join((eye, units, 'RMS_PE'))] = np.hypot(RMS[0], RMS[1])
+    ###
+    
+    
+    ###STD 
+    STD=[]
+    for std in [np.std(rolling_data_x, axis=1), np.std(rolling_data_y, axis=1)]:
+        std_tmp = ma.getdata(std)
+        mask = ma.getmask(std)
+        std_tmp[mask]=np.nan
+        STD.append(std_tmp)
+    
+    measures['_'.join((eye, units, 'STD', 'x'))] = STD[0]
+    measures['_'.join((eye, units, 'STD', 'y'))] = STD[1]
+    measures['_'.join((eye, units, 'STD'))] = np.hypot(STD[0], STD[1])
+    
+    #STD of PE 
+    STD=[]
+    for std in [np.std(rolling_err_x, axis=1), np.std(rolling_err_y, axis=1)]:
+        std_tmp = ma.getdata(std)
+        mask = ma.getmask(std)
+        std_tmp[mask]=np.nan
+        STD.append(std_tmp)
+    
+    measures['_'.join((eye, units, 'STD_PE', 'x'))] = STD[0]
+    measures['_'.join((eye, units, 'STD_PE', 'y'))] = STD[1]
+    measures['_'.join((eye, units, 'STD_PE'))] = np.hypot(STD[0], STD[1])
+                                          
+    ###ACC
+    ACC=[]
+    for acc in [np.median(rolling_err_x, axis=1), np.median(rolling_err_y, axis=1)]:
+        acc_tmp = ma.getdata(acc)
+        mask = ma.getmask(acc)
+        acc_tmp[mask]=np.nan
+        ACC.append(acc_tmp)
+    
+    measures['_'.join((eye, units, 'ACC', 'x'))] = ACC[0]
+    measures['_'.join((eye, units, 'ACC', 'y'))] = ACC[1]
+    measures['_'.join((eye, units, 'ACC'))] = np.hypot(ACC[0], ACC[1])
+    
+    #Absolute accuracy
+    ACC=[]
+    for acc in [np.median(np.abs(rolling_err_x), axis=1), np.median(np.abs(rolling_err_y), axis=1)]:
+        acc_tmp = ma.getdata(acc)
+        mask = ma.getmask(acc)
+        acc_tmp[mask]=np.nan
+        ACC.append(acc_tmp)
+    
+    measures['_'.join((eye, units, 'ACC_abs', 'x'))] = ACC[0]
+    measures['_'.join((eye, units, 'ACC_abs', 'y'))] = ACC[1]
+    measures['_'.join((eye, units, 'ACC_abs'))] = np.hypot(ACC[0], ACC[1])
+
+    #Fix
+    FIX=[]
+    for fix in [np.median(rolling_data_x, axis=1), np.median(rolling_data_y, axis=1)]:
+        fix_tmp = ma.getdata(fix)
+        mask = ma.getmask(fix)
+        fix_tmp[mask]=np.nan
+        FIX.append(fix_tmp)
+    
+    measures['_'.join((eye, units, 'fix', 'x'))] = FIX[0]
+    measures['_'.join((eye, units, 'fix', 'y'))] = FIX[1]
+    ###
+    
     return measures
     
 def getGeometry(data):
@@ -427,6 +520,7 @@ def filter_trackloss(data_wide, et_model=None, fill=np.nan):
     data = np.copy(data_wide) 
     for eye in ['left', 'right']:
         #TODO: Filter off-screen, off-pshysical limit samples
+        #      eyetribe dynamic et_nan_value 
         trackloss = (data['_'.join((eye, 'gaze_x'))] == et_nan_values[et_model]['x']) | \
                     (data['_'.join((eye, 'gaze_y'))] == et_nan_values[et_model]['y']) | \
                     (np.isnan(data['_'.join((eye, 'gaze_x'))])) | \
@@ -448,3 +542,60 @@ def filter_trackloss(data_wide, et_model=None, fill=np.nan):
         loss_count['avg'] = loss_count[eye]
         
     return data, loss_count
+
+def filter_offscreen(data_wide, limit=0, fill=np.nan):
+    """
+    Off-screen data filter. Replaces invalid samples with /fill/
+    
+    @author: Raimondas Zemblys
+    @email: raimondas.zemblys@humlab.lu.se
+    """   
+    data = np.copy(data_wide)
+    for _dir in ['x', 'y']:
+        interval = np.min(data['_'.join(('target_angle', _dir))])-limit, \
+                   np.max(data['_'.join(('target_angle', _dir))])+limit
+        for eye in parseTrackerMode(data['eyetracker_mode'][0]):
+            mask = ma.getmask(ma.masked_outside(data['_'.join((eye, 'angle', _dir))], 
+                                               interval[0], interval[1]))
+            data['_'.join((eye, 'angle', _dir))][mask]=fill
+            data['_'.join((eye, 'gaze', _dir))][mask]=fill
+    return data
+
+def plot_data(data, measure='angle', title=None, ylim=None, fname=None, keep=False, stim=None):
+    """
+    Plots gaze data
+    
+    @author: Raimondas Zemblys
+    @email: raimondas.zemblys@humlab.lu.se
+    """
+    fig = plt.figure()
+    plt.suptitle(title)
+    dir_label = dict()
+    dir_label['x'] = 'Horizontal position, deg'
+    dir_label['y'] = 'Vertical position, deg'
+    
+    for subplot_ind, _dir in enumerate(['x', 'y']):
+        for eye in parseTrackerMode(data['eyetracker_mode'][0]):
+            plt.subplot(2,1,subplot_ind+1)
+            plt.plot(data['time'], data['_'.join((eye, measure, _dir))])
+            plt.plot(data['time'], data['_'.join(('target', measure, _dir))], 'k-')
+            plt.xlim(data['time'][0], data['time'][-1])
+            plt.ylabel(dir_label[_dir])
+            if ylim:
+                plt.ylim(ylim[0], ylim[1])
+            
+            if type(stim) is np.ndarray:
+                for stim_row in stim:
+                    s = stim_row['_'.join((eye, measure, 'ind'))]
+                    e = s+stim_row['_'.join((eye, measure, 'sample_count'))]
+                    r = np.arange(s, e, dtype=np.int32)
+                    plt.plot(data['time'][r], data['_'.join((eye, measure, _dir))][r], 'r-', linewidth=3)
+    
+    plt.xlabel('Time, s')
+    if fname:   
+        plt.savefig(fname, dpi=fig.dpi*4)
+    
+    if not(keep):
+        fig.clf()
+        plt.close(fig)
+        fig = None 

@@ -1,5 +1,4 @@
-__author__ = 'Sol'
-__version__ = 'RZ'
+__authors__ = 'Sol', 'r-zemblys'
 import numpy as np
 
 et_nan_values = dict()
@@ -17,7 +16,7 @@ et_nan_values['x2'] = {'x': -1.0, 'y': -1.0}
 et_nan_values['dpi'] = {'x': -10000, 'y': -10000}
 
 wide_row_dtype = np.dtype([
-    ('subject_id', np.uint8),
+    ('subject_id', np.uint16),
     ('display_refresh_rate', np.float32),
     ('eyetracker_model', str, 32),
     ('dot_deg_sz', np.float32),
@@ -114,6 +113,7 @@ stim_dtype = np.dtype([
     ('eyetracker_mode', str, 16),
     ('px2deg', np.float32), 
     ('operator', str, 8),
+    ('exp_date', str, 32),
 
     ('subject_id', np.uint8),
     ('trial_id', np.uint16),
@@ -157,8 +157,6 @@ stim_dtype = np.dtype([
     ('left_gaze_STD_PE_y', np.float32),
     ('left_gaze_fix_x', np.float32),
     ('left_gaze_fix_y', np.float32),
-    ('left_gaze_range_x', np.float32),
-    ('left_gaze_range_y', np.float32),
     
     ('left_angle_ind', np.float32),
     ('left_angle_window_onset', np.float32),
@@ -184,8 +182,6 @@ stim_dtype = np.dtype([
     ('left_angle_STD_PE_y', np.float32),
     ('left_angle_fix_x', np.float32),
     ('left_angle_fix_y', np.float32),
-    ('left_angle_range_x', np.float32),
-    ('left_angle_range_y', np.float32),
     
     ('right_invalid_sample_count', np.float32),
     ('right_gaze_ind', np.float32),
@@ -212,8 +208,6 @@ stim_dtype = np.dtype([
     ('right_gaze_STD_PE_y', np.float32),
     ('right_gaze_fix_x', np.float32),
     ('right_gaze_fix_y', np.float32),
-    ('right_gaze_range_x', np.float32),
-    ('right_gaze_range_y', np.float32),
     
     ('right_angle_ind', np.float32),
     ('right_angle_window_onset', np.float32),
@@ -239,8 +233,6 @@ stim_dtype = np.dtype([
     ('right_angle_STD_PE_y', np.float32),
     ('right_angle_fix_x', np.float32),
     ('right_angle_fix_y', np.float32),
-    ('right_angle_range_x', np.float32),
-    ('right_angle_range_y', np.float32),
     ])
     
 stim_pos_mappings=dict([
