@@ -34,8 +34,8 @@ MONOCULAR_TRACKERS = (
 
 INCLUDE_SUB = 'ALL'
 
-INPUT_FILE_ROOT = r"/media/nxr/EDQ/data.Nov.03/"
-OUTPUT_FOLDER = r'/media/nxr/EDQ/data_npy/'
+INPUT_FILE_ROOT = r"/media/Data/EDQ/data_hdf5"
+OUTPUT_FOLDER = r'/media/Data/EDQ/data_npy'
 
 SAVE_NPY = True
 SAVE_TXT = False
@@ -92,6 +92,7 @@ from constants import (MONOCULAR_EYE_SAMPLE, BINOCULAR_EYE_SAMPLE, MESSAGE,
 from edq_shared import (getFullOutputFolderPath, nabs, 
                        save_as_txt, parseTrackerMode, VisualAngleCalc,
                        filter_trackloss,
+                       plot_data,
 )
 
 if 'dpi' in INCLUDE_TRACKERS:
@@ -507,7 +508,7 @@ def handle_dpi_multisession(data):
     #Finds last block of calibration and Fixate-Saccade task
     print 'Multisession DPI data found'
     sessions = np.unique(data['session_id'])
-    print sessions
+
     _fs = []
     _cal = []
     for session_id in sessions:
@@ -524,16 +525,10 @@ def handle_dpi_multisession(data):
     _cal_=_cal[:_fs_LastOcc+1]
     _cal_LastOcc = len(_cal_) - 1 - _cal_[::-1].index(25)
     
-    print _fs
-    print _cal
-    
-    print _fs_LastOcc, _cal_LastOcc
-    
     session_data = data['session_id'] == sessions[_cal_LastOcc]
     DATA_CAL=data[session_data]
     cal_block = DATA_CAL['BLOCK'] == 'DPICAL'
     DATA_CAL=DATA_CAL[cal_block]
-    
     
     session_data = data['session_id'] == sessions[_fs_LastOcc]
     DATA_EXP=data[session_data]
@@ -567,33 +562,6 @@ def nan_equal(a,b):
         return False
     return True
 
-def plot_data(data, title, fname, ylim, keep=False):
-    
-    fig = plt.figure()
-    plt.suptitle(title)
-    
-    for eye in parseTrackerMode(data['eyetracker_mode'][0]):
-        plt.subplot(2,1,1)
-        plt.plot(data['time'], data[eye+'_angle_x'])
-        plt.plot(data['time'], data['target_angle_x'], 'k-')
-        plt.ylim(ylim[0], ylim[1])
-        plt.xlim(data['time'][0], data['time'][-1])
-        plt.ylabel('Horizontal position, deg')
-        
-        plt.subplot(2,1,2)
-        plt.plot(data['time'], data[eye+'_angle_y'])
-        plt.plot(data['time'], data['target_angle_y'], 'k-')
-        plt.ylim(ylim[0], ylim[1])
-        plt.xlim(data['time'][0], data['time'][-1]) 
-        plt.xlabel('Time, s')
-        plt.ylabel('Vertical position, deg')
-    
-    plt.savefig(fname)
-    
-    if not(keep):
-        fig.clf()
-        plt.close(fig)
-        fig = None
     
 #Custom conversion settings
 if DATASET == 'EDQ_LUND':
@@ -656,8 +624,22 @@ print 'OUTPUT_FOLDER:', OUTPUT_FOLDER
 
 DATA_FILES = [nabs(fpath) for fpath in glob.glob(GLOB_PATH_PATTERN) if
               analyseit(fpath)]
- 
-      
+
+#Check for dublicates
+sub_dict = dict()
+for et_model in INCLUDE_TRACKERS:
+    sub_dict[et_model] = []
+    for file_path in DATA_FILES:
+        et, sub = getInfoFromPath(file_path)
+        if et==et_model:
+            sub_dict[et_model].append(sub)
+    if len(sub_dict[et_model]) != len(np.unique(sub_dict[et_model])):
+        unique_ids, unique_counts = np.unique(sub_dict[et_model], return_counts=True)
+        
+        print 'Dublicate subject ids in %s:'%et_model, \
+        unique_ids[np.argwhere(unique_counts > 1).flatten()]
+        sys.exit()
+
 ############### MAIN RUNTIME SCRIPT ########################
 #
 # Below is the actual script that is run when this file is run through
@@ -682,7 +664,7 @@ if __name__ == '__main__':
     file_proc_count = 0
     total_file_count = len(DATA_FILES)
     hub_file = None
-    
+    file_log = None
     
     for file_path in DATA_FILES:
         file_log = open(OUTPUT_FOLDER + '/conversion.log', 'a')
@@ -753,7 +735,9 @@ if __name__ == '__main__':
                           'win_size': calibration_settings_set[0]['win_size'],
                           'win_type': calibration_settings_set[0]['win_type'],
                           'window_skip': calibration_settings_set[0]['window_skip'],
-                          'wsa': [calibration_settings_set[0]['wsa']]}
+                          'wsa': [calibration_settings_set[0]['wsa']],
+                          'target_count' : 25
+                          }
                     
                     cal_points = cal_point_sets[cal_point_set]
                     cal_block = data_wide['BLOCK'] == 'DPICAL'
@@ -840,16 +824,25 @@ if __name__ == '__main__':
                     
                     #Save only FS block
                     data_wide = data_wide[exp_block]
-                    
-                    file_log.write('[DPI_CAL_OK]\tfile: {file_path}\tCalibrated using {cal_p} points\n'.format(cal_p=np.sum(cal_ind), file_path=file_path ))
-                    print np.sum(cal_ind)
-                    print 'DPI calibration duration: ', getTime()-t1  
+
+                    ### Empty recording check 
+                    _, loss_count = filter_trackloss(data_wide, et_model)
+                    check_eye = dict()
+                    #Becomes True if all nans found                
+                    check_eye['right'] = loss_count['right'] == len(data_wide['right_gaze_x'])
+                    check_eye['left'] = loss_count['left'] == len(data_wide['left_gaze_x'])
+                    if check_eye['right'] &  check_eye['left']:
+                        print "Recording does not contain any data...skipping"
+                        raise ConversionError(str("DPI_NO_DATA")) 
+                    else:
+                        file_log.write('[DPI_CAL_OK]\tfile: {file_path}\tCalibrated using {cal_p} points\n'.format(cal_p=np.sum(cal_ind), file_path=file_path ))
+                        print 'DPI calibration duration: ', getTime()-t1  
 
                 ### Handle DPI data END ###
                 
             else:
                 ### Handle VOG data START ###
-                data_wide, _ = filter_trackloss(data_wide, et_model)
+                data_wide, loss_count = filter_trackloss(data_wide, et_model)
                 
                 #All targets check                        
                 if len(np.unique(data_wide['ROW_INDEX']))<25: #continue, if at least half of the targets recorded
@@ -862,8 +855,8 @@ if __name__ == '__main__':
                 ### Empty recording check 
                 check_eye = dict()
                 #Becomes True if all nans found                
-                check_eye['right'] = np.sum(np.isnan(data_wide['right_gaze_x'])) == len(data_wide['right_gaze_x'])
-                check_eye['left'] = np.sum(np.isnan(data_wide['left_gaze_x'])) == len(data_wide['left_gaze_x'])
+                check_eye['right'] = loss_count['right'] == len(data_wide['right_gaze_x'])
+                check_eye['left'] = loss_count['left'] == len(data_wide['left_gaze_x'])
                 if check_eye['right'] &  check_eye['left']:
                     print "Recording does not contain any data...skipping"
                     raise ConversionError(str("VOG_NO_DATA"))                
@@ -928,7 +921,7 @@ if __name__ == '__main__':
                                                                                                                           sub=sub,
                                                                                                                           sid=sid
                                                                                                                    )
-                                plot_data(data_wide[mask], _title, _fname, ylim=[-30, 30]) 
+                                plot_data(data_wide, title=_title, fname=_fname, ylim=[-30, 30]) 
                             ###
                                 
                     tr_loss = np.array(tr_loss)
@@ -986,9 +979,9 @@ if __name__ == '__main__':
                                                                                    sub=sub
                                                                             )
                 if et_model == 'dpi':
-                    plot_data(data_wide, _title, _fname, ylim=[-10, 10])
+                    plot_data(data_wide, title=_title, fname=_fname, ylim=[-10, 10])
                 else:
-                    plot_data(data_wide, _title, _fname, ylim=[-30, 30])
+                    plot_data(data_wide, title=_title, fname=_fname, ylim=[-30, 30])
             ###
         
         except ConversionError, e:
@@ -1019,3 +1012,4 @@ if __name__ == '__main__':
         file_log.close()
 
 sys.exit()
+    
