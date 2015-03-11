@@ -17,17 +17,17 @@ et_nan_values['dpi'] = {'x': -10000, 'y': -10000}
 
 wide_row_dtype = np.dtype([
     ('subject_id', np.uint16),
-    ('display_refresh_rate', np.float32),
+    ('display_refresh_rate', np.uint8),
     ('eyetracker_model', str, 32),
     ('dot_deg_sz', np.float32),
     ('eyetracker_sampling_rate', np.float32),
     ('eyetracker_mode', str, 16),
     ('fix_stim_center_size_pix', np.uint8),
     ('operator', str, 8),
-    ('eyetracker_id', np.uint8),
-    ('display_width_pix', np.float32),
-    ('display_height_pix', np.float32),
-    ('exp_date', str, 32),
+    ('et_model', str, 16),
+    ('display_width_pix', np.uint16),
+    ('display_height_pix', np.uint16),
+    ('exp_date', str, 16),
     ('screen_width', np.float32),
     ('screen_height', np.float32),
     ('eye_distance', np.float32),
@@ -58,7 +58,20 @@ wide_row_dtype = np.dtype([
     ('right_angle_y', np.float32)
     ])
     
-
+et_mappings = dict([
+    ('DPI', 'dpi'), 
+    ('LCTech EyeFollower', 'eyefollower'),
+    ('SR Research EyeLInk1000', 'eyelink'),
+    ('TheEyeTribe', 'eyetribe'),
+    ('SMI HiSpeed1250', 'hispeed1250'),
+    ('SMI HiSpeed240', 'hispeed240'),
+    ('SMI RED250', 'red250'),
+    ('SMI RED500', 'red500'),
+    ('SMI REDm', 'redm'),
+    ('Tobii T60 XL', 't60xl'),
+    ('Tobii TX300', 'tx300'),
+    ('Tobii x2-60', 'x2'),
+])
 
 from collections import OrderedDict
 msg_txt_mappings = OrderedDict()
@@ -109,6 +122,7 @@ dpi_cal_fix = dict([
 stim_dtype = np.dtype([
 
     ('eyetracker_model', str, 32),
+    ('et_model', str, 32),
     ('eyetracker_sampling_rate', np.float32),
     ('eyetracker_mode', str, 16),
     ('px2deg', np.float32), 

@@ -84,20 +84,20 @@ from collections import OrderedDict
 
 from constants import (MONOCULAR_EYE_SAMPLE, BINOCULAR_EYE_SAMPLE, MESSAGE,
                        MULTI_CHANNEL_ANALOG_INPUT,
-                       wide_row_dtype, msg_txt_mappings,
+                       wide_row_dtype, msg_txt_mappings, et_mappings,
                        dpi_cal_fix, stim_pos_mappings,
                        smc_dtype
 )
                        
 from edq_shared import (getFullOutputFolderPath, nabs, 
                        save_as_txt, parseTrackerMode, VisualAngleCalc,
-                       filter_trackloss,
+                       filter_trackloss, 
                        plot_data,
 )
 
 if 'dpi' in INCLUDE_TRACKERS:
     import cv2 #Bilateral filter from OpenCV library is used to filter DPI data
-    from edq_shared import detect_rollingWin
+    from edq_shared import detect_rollingWin, filter_bilateral
 
 try:
     from yaml import load, dump
@@ -423,14 +423,15 @@ def convertEDQ(hub_file, screen_measures, et_model):
     return sample_data_by_session
 
 
-def getScreenMeasurements(dpath, et_model_display_configs):
+def getScreenMeasurements(dpath, et_model, et_model_display_configs):
     """
 
     :param dpath:
+    :param et_model:
     :param et_model_display_configs:
     :return:
     """
-    et_model, _ = getInfoFromPath(dpath)
+#    et_model, _ = getInfoFromPath(dpath)
     display_param = et_model_display_configs.get(et_model)
     if display_param is None:
         et_config_path = glob.glob('./configs/*%s.yaml' % (et_model))
@@ -452,8 +453,8 @@ def getScreenMeasurements(dpath, et_model_display_configs):
                         screen_measure_fields[1]] = height
                     et_model_display_configs[et_model][
                         screen_measure_fields[2]] = eye_dist
-                    return et_model_display_configs[et_model], et_model
-    return display_param, et_model
+                    return et_model_display_configs[et_model]
+    return display_param
 
 
 def checkFileIntegrity(hub_file):
@@ -488,21 +489,6 @@ def checkFileIntegrity(hub_file):
         return False
 
     return True
-    
-
-def filter_bilateral(data, sigmaSpace=0, d=-1, sigmaColor=0):
-    """
-    Filters DPI data using bilateral filter
-    
-    @author: Raimondas Zemblys
-    @email: raimondas.zemblys@humlab.lu.se
-    """ 
-    for _eye in ['left', 'right']:
-        for _unit in ['gaze', 'angle']:
-            for _dir in ['x', 'y']:
-                _key = '_'.join((_eye, _unit, _dir))
-                data[_key] = np.squeeze(cv2.bilateralFilter(data[_key], d,sigmaColor,sigmaSpace))
-    return data
 
 def handle_dpi_multisession(data):        
     #Finds last block of calibration and Fixate-Saccade task
@@ -619,6 +605,9 @@ if 'dpi' in INCLUDE_TRACKERS:
         'units': 'gaze',
     }]
 
+if not os.path.exists(OUTPUT_FOLDER):
+    os.mkdir(OUTPUT_FOLDER)
+    
 OUTPUT_FOLDER = getFullOutputFolderPath(OUTPUT_FOLDER)
 print 'OUTPUT_FOLDER:', OUTPUT_FOLDER
 
@@ -692,7 +681,7 @@ if __name__ == '__main__':
 #                file_log.write('[FILE_CORRUPT]\tfile: {file_path}\n'.format(file_path=file_path ))
                 raise ConversionError(str("FILE_CORRUPT"))
             
-            screen_measurments, et_model = getScreenMeasurements(file_path, et_model_display_configs)
+            screen_measurments = getScreenMeasurements(file_path, et_model, et_model_display_configs)
             wide_format_samples_by_session = convertEDQ(hub_file,
                                                         screen_measurments,
                                                         et_model
@@ -708,12 +697,14 @@ if __name__ == '__main__':
     
             scount += len(wide_format_samples)
             
-            data_wide = np.array(wide_format_samples, dtype=wide_row_dtype)            
+            data_wide = np.array(wide_format_samples, dtype=wide_row_dtype)
+            data_wide['et_model'] = et_mappings[data_wide['eyetracker_model'][0]]          
             tracking_eye = parseTrackerMode(data_wide['eyetracker_mode'][0])
             
             if (et_model == 'dpi'):
                 ### Handle DPI data START ###
                 data_wide, _ = filter_trackloss(filter_bilateral(data_wide), et_model)
+#                data_wide, _ = filter_trackloss(data_wide, et_model)
             
                 if CALIBRATE_DPI:
                     t1 = getTime()
@@ -844,6 +835,10 @@ if __name__ == '__main__':
                 ### Handle VOG data START ###
                 data_wide, loss_count = filter_trackloss(data_wide, et_model)
                 
+#                from edq_shared import filter_bilateral
+#                data_wide, loss_count = filter_trackloss(filter_bilateral(data_wide), et_model)
+#                data_wide['et_model'] = data_wide['et_model'][0]+'_0'
+                
                 #All targets check                        
                 if len(np.unique(data_wide['ROW_INDEX']))<25: #continue, if at least half of the targets recorded
                     print "Not enough data recorded...skipping"
@@ -944,9 +939,9 @@ if __name__ == '__main__':
                         raise ConversionError(str("VOG_NO_DATA_STIM"))
                         
                 ### Handle VOG data END ###
-                        
+                       
             print 'Conversion duration: ', getTime()-t0
-    
+            data_wide
             ### Save data
             if SAVE_NPY:
                 np_file_name = r"%s/%s_%s.npy" % (et_dir, et_model, dfile[:-5]) 
@@ -979,7 +974,7 @@ if __name__ == '__main__':
                                                                                    sub=sub
                                                                             )
                 if et_model == 'dpi':
-                    plot_data(data_wide, title=_title, fname=_fname, ylim=[-10, 10])
+                    plot_data(data_wide, title=_title, fname=_fname, ylim=[-10, 10], keep=False)
                 else:
                     plot_data(data_wide, title=_title, fname=_fname, ylim=[-30, 30])
             ###

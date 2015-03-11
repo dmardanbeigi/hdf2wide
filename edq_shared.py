@@ -163,6 +163,7 @@ def initStim(data, n):
     """
     #Independent variables
     INCLUDE_IVs = ['eyetracker_model',
+                   'et_model',
                    'eyetracker_sampling_rate',
                    'eyetracker_mode',
                    'operator',
@@ -297,6 +298,7 @@ def rolling_measures_sample(data, eye, units, win_size_sample):
     
     rolling_err_x = rolling_window(err_x, win_size_sample)
     rolling_err_y = rolling_window(err_y, win_size_sample)
+    rolling_err_xy = rolling_window(np.hypot(err_x, err_y), win_size_sample)
     
     #Time
     rolling_time = rolling_window(data['time'], win_size_sample)
@@ -336,20 +338,18 @@ def rolling_measures_sample(data, eye, units, win_size_sample):
     ###
                                               
     ###ACC
-    measures['_'.join((eye, units, 'ACC', 'x'))] = np.median(rolling_err_x, axis=1)
-    measures['_'.join((eye, units, 'ACC', 'y'))] = np.median(rolling_err_y, axis=1)
+    measures['_'.join((eye, units, 'ACC', 'x'))] = np.mean(rolling_err_x, axis=1)
+    measures['_'.join((eye, units, 'ACC', 'y'))] = np.mean(rolling_err_y, axis=1)
     measures['_'.join((eye, units, 'ACC'))] = np.hypot(measures['_'.join((eye, units, 'ACC', 'x'))],
                                                        measures['_'.join((eye, units, 'ACC', 'y'))]   
                                               )
     #Absolute accuracy
-    measures['_'.join((eye, units, 'ACC_abs', 'x'))] = np.median(np.abs(rolling_err_x), axis=1)
-    measures['_'.join((eye, units, 'ACC_abs', 'y'))] = np.median(np.abs(rolling_err_y), axis=1)
-    measures['_'.join((eye, units, 'ACC_abs'))] = np.hypot(measures['_'.join((eye, units, 'ACC_abs', 'x'))],
-                                                           measures['_'.join((eye, units, 'ACC_abs', 'y'))]   
-                                                  )
+    measures['_'.join((eye, units, 'ACC_abs', 'x'))] = np.mean(np.abs(rolling_err_x), axis=1)
+    measures['_'.join((eye, units, 'ACC_abs', 'y'))] = np.mean(np.abs(rolling_err_y), axis=1)
+    measures['_'.join((eye, units, 'ACC_abs'))] = np.mean(rolling_err_xy, axis=1) 
     #Fix
-    measures['_'.join((eye, units, 'fix', 'x'))] = np.median(rolling_data_x, axis=1)
-    measures['_'.join((eye, units, 'fix', 'y'))] = np.median(rolling_data_y, axis=1)
+    measures['_'.join((eye, units, 'fix', 'x'))] = np.mean(rolling_data_x, axis=1)
+    measures['_'.join((eye, units, 'fix', 'y'))] = np.mean(rolling_data_y, axis=1)
     ###
     
     return measures
@@ -385,6 +385,7 @@ def rolling_measures_time(data, eye, units, win_size):
     
     rolling_err_x = ma.array(rolling_window(err_x, win_size_sample*2),mask=mask_data) 
     rolling_err_y = ma.array(rolling_window(err_y, win_size_sample*2),mask=mask_data)
+    rolling_err_xy = ma.array(rolling_window(np.hypot(err_x, err_y), win_size_sample*2),mask=mask_data) 
     
     #Time
     rolling_time = ma.array(rolling_window(data['time'], win_size_sample*2),mask=mask_data)
@@ -475,7 +476,9 @@ def rolling_measures_time(data, eye, units, win_size):
     
     #Absolute accuracy
     ACC=[]
-    for acc in [np.median(np.abs(rolling_err_x), axis=1), np.median(np.abs(rolling_err_y), axis=1)]:
+    for acc in [np.median(np.abs(rolling_err_x), axis=1), 
+                np.median(np.abs(rolling_err_y), axis=1),
+                np.median(rolling_err_xy, axis=1)]:
         acc_tmp = ma.getdata(acc)
         mask = ma.getmask(acc)
         acc_tmp[mask]=np.nan
@@ -483,7 +486,7 @@ def rolling_measures_time(data, eye, units, win_size):
     
     measures['_'.join((eye, units, 'ACC_abs', 'x'))] = ACC[0]
     measures['_'.join((eye, units, 'ACC_abs', 'y'))] = ACC[1]
-    measures['_'.join((eye, units, 'ACC_abs'))] = np.hypot(ACC[0], ACC[1])
+    measures['_'.join((eye, units, 'ACC_abs'))] = ACC[2]
 
     #Fix
     FIX=[]
@@ -515,6 +518,12 @@ def filter_trackloss(data_wide, et_model=None, fill=np.nan):
     
     @author: Raimondas Zemblys
     @email: raimondas.zemblys@humlab.lu.se
+    
+    TODO: remove groups of samples with velocity == 0 to avoid RMS=0
+    import itertools
+    def runs_of_ones(bits):
+      for bit, group in itertools.groupby(bits):
+        if bit==0: yield group
     """   
     loss_count = dict()
     data = np.copy(data_wide) 
@@ -559,6 +568,21 @@ def filter_offscreen(data_wide, limit=0, fill=np.nan):
                                                interval[0], interval[1]))
             data['_'.join((eye, 'angle', _dir))][mask]=fill
             data['_'.join((eye, 'gaze', _dir))][mask]=fill
+    return data
+    
+def filter_bilateral(data, sigmaSpace=0, d=-1, sigmaColor=0):
+    """
+    Filters DPI data using bilateral filter
+    
+    @author: Raimondas Zemblys
+    @email: raimondas.zemblys@humlab.lu.se
+    """ 
+    import cv2
+    for _eye in ['left', 'right']:
+        for _unit in ['gaze', 'angle']:
+            for _dir in ['x', 'y']:
+                _key = '_'.join((_eye, _unit, _dir))
+                data[_key] = np.squeeze(cv2.bilateralFilter(data[_key], d,sigmaColor,sigmaSpace))
     return data
 
 def plot_data(data, measure='angle', title=None, ylim=None, fname=None, keep=False, stim=None):
